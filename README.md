@@ -2,6 +2,7 @@
 
 Pipeline + modeling scripts for **MESA (Multi-Ethnic Study of Atherosclerosis)** analyses focused on **incident Heart Failure (HF)** and **race/ethnicity × biomarker** associations. The workflow is designed to run locally (in R) using MESA CSV extracts obtained via controlled-access mechanisms (NHLBI BioLINCC).
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18987368.svg)](https://doi.org/10.5281/zenodo.18987368)
 ---
 
 ## What’s in this repo
@@ -24,7 +25,7 @@ Pipeline + modeling scripts for **MESA (Multi-Ethnic Study of Atherosclerosis)**
 
 ---
 
-## Core logic / conventions
+## Core logic/conventions
 
 ### Join key (important)
 When merging MESA tables, **always use `MESAID` as the primary join key**. Both scripts enforce this (they stop if `mesaid` is missing after name cleaning).
@@ -179,9 +180,10 @@ Copyright (c) [2026] Félix E. Rivera-Mariani
 
 - If you use this workflow or scripts in a publication, please cite:
 
-Rivera-Mariani FE.
-MESA Heart Failure Biomarker–Ethnicity Analysis Pipeline.
-GitHub repository. 2026.
+Rivera-Mariani FE (2026)
+MESA Heart Failure Biomarker–Ethnicity Analysis Pipeline
+Zenodo
+https://doi.org/10.5281/zenodo.18987368
 
 
 - Publications using MESA data should also cite the primary cohort description:
