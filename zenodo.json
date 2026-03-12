@@ -1,0 +1,31 @@
+{
+  "title": "MESA Heart Failure Biomarker\u2013Ethnicity Analysis Pipeline",
+  "creators": [
+    {
+      "name": "Rivera-Mariani, Felix E.",
+      "affiliation": "Lynn University",
+      "orcid": "0000-0002-6671-0174"
+    }
+  ],
+  "description": "Reproducible analysis pipeline for the Multi-Ethnic Study of Atherosclerosis (MESA) investigating associations between cardiovascular biomarkers, environmental exposures, and race/ethnicity interactions in relation to incident heart failure outcomes. The repository provides R-based workflows for cohort assembly, biomarker processing, survival modeling, and visualization while respecting controlled-access data policies for NHLBI BioLINCC datasets.",
+  "keywords": [
+    "MESA",
+    "environmental epidemiology",
+    "air pollution",
+    "biomarkers",
+    "heart failure",
+    "health disparities",
+    "cohort study",
+    "cardiovascular epidemiology"
+  ],
+  "upload_type": "software",
+  "license": "MIT",
+  "access_right": "open",
+  "related_identifiers": [
+    {
+      "identifier": "10.1093/aje/kwf113",
+      "relation": "isSupplementTo",
+      "scheme": "doi"
+    }
+  ]
+}
