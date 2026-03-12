@@ -9,7 +9,7 @@
 #
 # UPDATE (2026-03-12):
 # - aire1 ingestion now reads crp1m/fib1m missingness flags from
-#   mesaaire1_drepos_20240603.csv and applies them before coalescing.
+#   mesaaire1_drepos_20240603.csv (if present) and applies them before coalescing.
 # - Added crp1_source/fib1_source provenance columns to mesa_main.
 #------------------------------------------------------------------------------
 
@@ -31,20 +31,20 @@ paths <- list(
   # Events
   event_primary   = fs::path(BASE_DIR, "mesaevefthru2015_drepos_20200330.csv"),   # optional
   event_secondary = fs::path(BASE_DIR, "mesaevthr2020_drepos_20241120.csv"),      # preferred
-  
+
   # Core exam + covariates
   exam1   = fs::path(BASE_DIR, "mesae1dres20220813.csv"),
   site    = fs::path(BASE_DIR, "mesa_site_drepos_20181106.csv"),
-  
+
   # Environment / geocode
   air     = fs::path(BASE_DIR, "mesa_airexpos_ds_20231211.csv"),
   geocode = fs::path(BASE_DIR, "mesaas023raceseg_ds_20220111.csv"),
   aire1   = fs::path(BASE_DIR, "mesaaire1_drepos_20240603.csv"),
-  
+
   # Exam 4 / immune
   exam4   = fs::path(BASE_DIR, "mesae4dres06222012.csv"),
   immune  = fs::path(BASE_DIR, "mesaas042_drepos_20150819.csv"),
-  
+
   # Cardiac biomarkers
   cardiac079 = fs::path(BASE_DIR, "mesaas079_drepos_20151118.csv"),
   cardiac244 = fs::path(BASE_DIR, "mesaas244_drepos_20161011.csv")
@@ -53,20 +53,20 @@ paths <- list(
 # 2) Helpers ------------------------------------------------------------------
 read_mesa_csv <- function(path, keep = NULL, guess_max = 20000) {
   if (!fs::file_exists(path)) stop(glue::glue("File not found: {path}"))
-  
+
   dat <- readr::read_csv(path, show_col_types = FALSE, guess_max = guess_max) %>%
     janitor::clean_names()
-  
+
   if (!"mesaid" %in% names(dat)) {
     stop(glue::glue("Column 'mesaid' not found in {basename(path)}"))
   }
-  
+
   dat <- dat %>% mutate(mesaid = as.integer(mesaid))
-  
+
   if (!is.null(keep)) {
     dat <- dat %>% select(any_of(c("mesaid", keep)))
   }
-  
+
   dat
 }
 
@@ -89,19 +89,19 @@ make_log_z <- function(x) {
   x <- as.numeric(x)
   pos <- x[is.finite(x) & x > 0]
   if (length(pos) < 2L) return(rep(NA_real_, length(x)))
-  
+
   cst <- 0.5 * min(pos, na.rm = TRUE)
   lx  <- log(x + cst)
   sdx <- stats::sd(lx, na.rm = TRUE)
   if (!is.finite(sdx) || sdx == 0) return(rep(NA_real_, length(x)))
-  
+
   as.numeric(scale(lx))
 }
 
 load_cardiac <- function(file079, file244) {
   card079 <- tibble(mesaid = integer())
   card244 <- tibble(mesaid = integer())
-  
+
   if (fs::file_exists(file079)) {
     card079 <- read_mesa_csv(file079, c("tntstat1", "ntprbnp1", "tntstat3", "ntprbnp3")) %>%
       transmute(
@@ -112,7 +112,7 @@ load_cardiac <- function(file079, file244) {
         troponin_e3_079 = tntstat3
       )
   }
-  
+
   if (fs::file_exists(file244)) {
     card244 <- read_mesa_csv(file244, c(
       "probnpb1", "probnpbqns1", "probnpblob1",
@@ -134,7 +134,7 @@ load_cardiac <- function(file079, file244) {
         troponin_blob3  = hstntblob3
       )
   }
-  
+
   joined <- full_join(card244, card079, by = "mesaid")
   joined <- ensure_cols(joined, c(
     "ntprobnp_e1_244", "ntprobnp_qns1", "ntprobnp_blob1",
@@ -142,7 +142,7 @@ load_cardiac <- function(file079, file244) {
     "ntprobnp_e3_244", "ntprobnp_blob3", "troponin_e3_244", "troponin_blob3",
     "ntprobnp_e1_079", "troponin_e1_079", "ntprobnp_e3_079", "troponin_e3_079"
   ))
-  
+
   joined %>%
     transmute(
       mesaid,
@@ -171,11 +171,11 @@ fit_interaction_cox <- function(data, biomarker, base_covars,
                                 event_var = "hf_event",
                                 race_var = "race_eth") {
   vars_needed <- c(time_var, event_var, biomarker, race_var, base_covars)
-  
+
   d <- data %>%
     select(any_of(vars_needed)) %>%
     filter(complete.cases(.), .data[[time_var]] > 0)
-  
+
   if (nrow(d) == 0L || sum(d[[event_var]], na.rm = TRUE) == 0L) {
     return(tibble(
       biomarker = biomarker,
@@ -188,14 +188,14 @@ fit_interaction_cox <- function(data, biomarker, base_covars,
       p_interaction = NA_real_
     ))
   }
-  
+
   rhs_base <- if (length(base_covars) > 0) paste(base_covars, collapse = " + ") else NULL
   rhs_red  <- paste(c(biomarker, race_var, rhs_base), collapse = " + ")
   rhs_full <- paste(c(paste0(biomarker, " * ", race_var), rhs_base), collapse = " + ")
-  
+
   red_formula  <- as.formula(paste0("survival::Surv(", time_var, ", ", event_var, ") ~ ", rhs_red))
   full_formula <- as.formula(paste0("survival::Surv(", time_var, ", ", event_var, ") ~ ", rhs_full))
-  
+
   fit_red <- tryCatch(
     survival::coxph(red_formula, data = d, ties = "efron"),
     error = function(e) NULL
@@ -204,7 +204,7 @@ fit_interaction_cox <- function(data, biomarker, base_covars,
     survival::coxph(full_formula, data = d, ties = "efron"),
     error = function(e) NULL
   )
-  
+
   if (is.null(fit_red) || is.null(fit_full)) {
     return(tibble(
       biomarker = biomarker,
@@ -217,16 +217,16 @@ fit_interaction_cox <- function(data, biomarker, base_covars,
       p_interaction = NA_real_
     ))
   }
-  
+
   lrt <- tryCatch(as.data.frame(anova(fit_red, fit_full, test = "LRT")), error = function(e) NULL)
   p_int <- if (!is.null(lrt)) as.numeric(lrt[nrow(lrt), ncol(lrt)]) else NA_real_
-  
+
   coef_tbl <- tryCatch(
     broom::tidy(fit_full, exponentiate = TRUE, conf.int = TRUE),
     error = function(e) tibble()
   )
   ref_row <- coef_tbl %>% filter(term == biomarker)
-  
+
   tibble(
     biomarker = biomarker,
     n = nrow(d),
@@ -241,7 +241,7 @@ fit_interaction_cox <- function(data, biomarker, base_covars,
 
 run_scan <- function(biomarkers, family_label, data, base_covars) {
   if (length(biomarkers) == 0L) return(tibble())
-  
+
   purrr::map_dfr(
     biomarkers,
     fit_interaction_cox,
@@ -268,7 +268,8 @@ evt_secondary <- read_mesa_csv(paths$event_secondary, c("fuptt", "prebase", "exa
 exam1 <- read_mesa_csv(paths$exam1, c(
   "age1c", "gender1", "race1c", "bmi1c", "sbp1c", "htn1c", "dm031c",
   "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c", "educ1", "income1",
-  "cig1c", "pkyrs1c", "crp1", "crp1m", "il61", "fib1", "fib1m", "ddimer1",
+  "cig1c", "pkyrs1c",
+  "crp1", "crp1m", "il61", "fib1", "fib1m", "ddimer1",
   "olvef1"
 ))
 
@@ -283,7 +284,9 @@ geocode_all <- read_mesa_csv(paths$geocode, c("exam", "accuracy"))
 
 cardiac <- load_cardiac(paths$cardiac079, paths$cardiac244)
 
+# Exam 1 ancillary air-related CRP/FIB (fallback only)
 aire1 <- if (fs::file_exists(paths$aire1)) {
+  # Read values + (optional) missingness flags if present in this ancillary extract
   read_mesa_csv(paths$aire1, c("crp1", "fib1", "crp1m", "fib1m"))
 } else {
   tibble(mesaid = integer())
@@ -292,9 +295,12 @@ if ("crp1"  %in% names(aire1)) aire1 <- aire1 %>% rename(crp1_air  = crp1)
 if ("fib1"  %in% names(aire1)) aire1 <- aire1 %>% rename(fib1_air  = fib1)
 if ("crp1m" %in% names(aire1)) aire1 <- aire1 %>% rename(crp1m_air = crp1m)
 if ("fib1m" %in% names(aire1)) aire1 <- aire1 %>% rename(fib1m_air = fib1m)
+
 aire1 <- ensure_cols(aire1, c("crp1_air", "fib1_air", "crp1m_air", "fib1m_air"))
-if (!all(is.na(aire1$crp1m_air))) aire1 <- aire1 %>% mutate(crp1_air = if_else(crp1m_air == 1, NA_real_, crp1_air))
-if (!all(is.na(aire1$fib1m_air))) aire1 <- aire1 %>% mutate(fib1_air = if_else(fib1m_air == 1, NA_real_, fib1_air))
+
+# Apply ancillary missingness flags if provided (robust if all NA / not present)
+if (!all(is.na(aire1$crp1m_air))) aire1 <- aire1 %>% mutate(crp1_air = if_else(crp1m_air == 1, NA_real_, crp1_air, missing = crp1_air))
+if (!all(is.na(aire1$fib1m_air))) aire1 <- aire1 %>% mutate(fib1_air = if_else(fib1m_air == 1, NA_real_, fib1_air, missing = fib1_air))
 
 exam4_biom <- if (fs::file_exists(paths$exam4)) {
   read_mesa_csv(paths$exam4, c("crp4", "crp4m", "fib4", "fib4m", "ddimer4", "icam4"))
@@ -313,57 +319,63 @@ immune <- if (fs::file_exists(paths$immune)) {
 }
 
 # 4) Basic missing-value handling ---------------------------------------------
+# Exam 1: apply missingness flags from main Exam 1 file
 exam1 <- ensure_cols(exam1, c("crp1", "crp1m", "fib1", "fib1m", "il61", "ddimer1", "olvef1"))
-if ("crp1m" %in% names(exam1)) exam1 <- exam1 %>% mutate(crp1 = if_else(crp1m == 1, NA_real_, crp1))
-if ("fib1m" %in% names(exam1)) exam1 <- exam1 %>% mutate(fib1 = if_else(fib1m == 1, NA_real_, fib1))
+if ("crp1m" %in% names(exam1)) exam1 <- exam1 %>% mutate(crp1 = if_else(crp1m == 1, NA_real_, crp1, missing = crp1))
+if ("fib1m" %in% names(exam1)) exam1 <- exam1 %>% mutate(fib1 = if_else(fib1m == 1, NA_real_, fib1, missing = fib1))
 
-if ("crp4m" %in% names(exam4_biom)) exam4_biom <- exam4_biom %>% mutate(crp4 = if_else(crp4m == 1, NA_real_, crp4))
-if ("fib4m" %in% names(exam4_biom)) exam4_biom <- exam4_biom %>% mutate(fib4 = if_else(fib4m == 1, NA_real_, fib4))
+# Exam 4: apply missingness flags
+if ("crp4m" %in% names(exam4_biom)) exam4_biom <- exam4_biom %>% mutate(crp4 = if_else(crp4m == 1, NA_real_, crp4, missing = crp4))
+if ("fib4m" %in% names(exam4_biom)) exam4_biom <- exam4_biom %>% mutate(fib4 = if_else(fib4m == 1, NA_real_, fib4, missing = fib4))
 
 # 5) Primary Exam 1 analytic dataset ------------------------------------------
 mesa_main <- exam1 %>%
-  left_join(aire1,          by = "mesaid") %>%
-  left_join(site,           by = "mesaid") %>%
-  left_join(evt_primary,    by = "mesaid") %>%
-  left_join(evt_secondary,  by = "mesaid") %>%
-  left_join(cardiac,        by = "mesaid") %>%
-  ensure_cols(c("efclass", "efmeas")) %>%        # <-- add this line
+  left_join(aire1,         by = "mesaid") %>%
+  left_join(site,          by = "mesaid") %>%
+  left_join(evt_primary,   by = "mesaid") %>%
+  left_join(evt_secondary, by = "mesaid") %>%
+  left_join(cardiac,       by = "mesaid") %>%
   mutate(
-    crp1_source = dplyr::case_when(
+    # provenance BEFORE coalesce (so it reflects the actual chosen value)
+    crp1_source = case_when(
       !is.na(crp1)     ~ "exam1",
-      !is.na(crp1_air) ~ "aire1",
+      is.na(crp1) & !is.na(crp1_air) ~ "aire1",
       TRUE             ~ NA_character_
     ),
-    fib1_source = dplyr::case_when(
+    fib1_source = case_when(
       !is.na(fib1)     ~ "exam1",
-      !is.na(fib1_air) ~ "aire1",
+      is.na(fib1) & !is.na(fib1_air) ~ "aire1",
       TRUE             ~ NA_character_
     ),
+
     crp1_final = coalesce(crp1, crp1_air),
     fib1_final = coalesce(fib1, fib1_air),
-    
+
     # Main endpoint: overall HF from secondary events CSV
     hf_event = if_else(!is.na(chf) & chf == 1, 1L, 0L),
     hf_time_days = case_when(
       hf_event == 1L ~ chftt,
       TRUE ~ fuptt
     ),
-    
+
     # EF subtype vars only if evt_primary exists (otherwise NA)
     ef_class_event = efclass,
     ef_meas_event  = efmeas,
-    
+
     # Optional baseline LVEF (exam-based)
     lvef_baseline = olvef1,
-    
+
     sex = factor(gender1),
     race_eth = factor(race1c),
     site_factor = factor(site1c),
-    
+
+    # Candidate biomarkers (Exam 1)
     z_log_crp1 = make_log_z(crp1_final),
     z_log_il61 = make_log_z(il61),
     z_fib1 = make_z(fib1_final),
     z_log_ddimer1 = make_log_z(ddimer1),
+
+    # Cardiac biomarkers (Exam 1)
     z_log_ntprobnp_e1 = make_log_z(ntprobnp_e1),
     z_log_troponin_e1 = make_log_z(troponin_e1)
   ) %>%
@@ -416,7 +428,7 @@ mesa_exam4_landmark <- exam4_biom %>%
     sex = factor(gender1),
     site_factor = factor(site1c),
     lvef_baseline = olvef1,
-    
+
     z_log_crp4 = make_log_z(crp4),
     z_fib4 = make_z(fib4),
     z_log_ddimer4 = make_log_z(ddimer4),
@@ -473,6 +485,11 @@ cat("Secondary biomarker count: ", length(secondary_biomarkers), "\n", sep = "")
 cat("N air/inflammation sensitivity participants: ", nrow(mesa_air_sens), "\n", sep = "")
 cat("N exam4/immune landmark-ready participants: ", nrow(mesa_exam4_landmark), "\n", sep = "")
 
+cat("CRP1 source counts:\n")
+print(table(mesa_main$crp1_source, useNA = "ifany"))
+cat("FIB1 source counts:\n")
+print(table(mesa_main$fib1_source, useNA = "ifany"))
+
 print(interaction_results)
 
 readr::write_csv(interaction_results, fs::path(OUT_DIR, "mesa_hf_ethnicity_biomarker_interactions.csv"))
@@ -520,9 +537,6 @@ theme_mesa <- function() {
 }
 
 ## Figure 1 — Forest plot: overall HR per SD biomarker ------------------------
-# Re-extract main-effect HRs from the full interaction models for each
-# available biomarker so every result is on a single plot.
-
 fig1_data <- interaction_results %>%
   filter(!is.na(hr_ref)) %>%
   mutate(
