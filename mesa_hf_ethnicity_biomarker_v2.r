@@ -6,6 +6,11 @@
 # - Use MESAID as primary join key everywhere.
 # - Event files: prefer mesaevthr2020_drepos_20241120.csv; optionally use
 #   mesaevefthru2015_drepos_20200330.csv if present for EF subtype fields.
+#
+# UPDATE (2026-03-12):
+# - aire1 ingestion now reads crp1m/fib1m missingness flags from
+#   mesaaire1_drepos_20240603.csv and applies them before coalescing.
+# - Added crp1_source/fib1_source provenance columns to mesa_main.
 #------------------------------------------------------------------------------
 
 # 0) Packages -----------------------------------------------------------------
@@ -278,13 +283,17 @@ geocode_all <- read_mesa_csv(paths$geocode, c("exam", "accuracy"))
 cardiac <- load_cardiac(paths$cardiac079, paths$cardiac244)
 
 aire1 <- if (fs::file_exists(paths$aire1)) {
-  read_mesa_csv(paths$aire1, c("crp1", "fib1"))
+  read_mesa_csv(paths$aire1, c("crp1", "fib1", "crp1m", "fib1m"))
 } else {
   tibble(mesaid = integer())
 }
-if ("crp1" %in% names(aire1)) aire1 <- aire1 %>% rename(crp1_air = crp1)
-if ("fib1" %in% names(aire1)) aire1 <- aire1 %>% rename(fib1_air = fib1)
-aire1 <- ensure_cols(aire1, c("crp1_air", "fib1_air"))
+if ("crp1"  %in% names(aire1)) aire1 <- aire1 %>% rename(crp1_air  = crp1)
+if ("fib1"  %in% names(aire1)) aire1 <- aire1 %>% rename(fib1_air  = fib1)
+if ("crp1m" %in% names(aire1)) aire1 <- aire1 %>% rename(crp1m_air = crp1m)
+if ("fib1m" %in% names(aire1)) aire1 <- aire1 %>% rename(fib1m_air = fib1m)
+aire1 <- ensure_cols(aire1, c("crp1_air", "fib1_air", "crp1m_air", "fib1m_air"))
+if (!all(is.na(aire1$crp1m_air))) aire1 <- aire1 %>% mutate(crp1_air = if_else(crp1m_air == 1, NA_real_, crp1_air))
+if (!all(is.na(aire1$fib1m_air))) aire1 <- aire1 %>% mutate(fib1_air = if_else(fib1m_air == 1, NA_real_, fib1_air))
 
 exam4_biom <- if (fs::file_exists(paths$exam4)) {
   read_mesa_csv(paths$exam4, c("crp4", "crp4m", "fib4", "fib4m", "ddimer4", "icam4"))
@@ -318,6 +327,16 @@ mesa_main <- exam1 %>%
   left_join(evt_secondary, by = "mesaid") %>%
   left_join(cardiac, by = "mesaid") %>%
   mutate(
+    crp1_source = dplyr::case_when(
+      !is.na(crp1)     ~ "exam1",
+      !is.na(crp1_air) ~ "aire1",
+      TRUE             ~ NA_character_
+    ),
+    fib1_source = dplyr::case_when(
+      !is.na(fib1)     ~ "exam1",
+      !is.na(fib1_air) ~ "aire1",
+      TRUE             ~ NA_character_
+    ),
     crp1_final = coalesce(crp1, crp1_air),
     fib1_final = coalesce(fib1, fib1_air),
     
