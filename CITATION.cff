@@ -1,14 +1,14 @@
-cff-version: 1.2.0
+cff-version: 1.2.1
 title: "MESA Heart Failure Biomarker–Ethnicity Analysis Pipeline"
 message: "If you use this repository, please cite it using the metadata below."
 type: software
 authors:
   - family-names: Rivera-Mariani
     given-names: Félix E.
-    orcid: "https://orcid.org/0000-0000-0000-0000"
+    orcid: "https://orcid.org/0000-0002-6671-0174"
 affiliation: Lynn University
-repository-code: "https://github.com/USERNAME/Mesa_Project"
-version: 1.0.0
+repository-code: "https://github.com/riplrt/Mesa_Project"
+version: 1.0.1
 date-released: 2026-03-12
 keywords:
   - MESA
