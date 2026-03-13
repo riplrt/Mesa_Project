@@ -2782,3 +2782,193 @@ readr::write_csv(
 
 print(fibrinogen_metabolic_interaction_tests)
 print(fibrinogen_metabolic_group_slopes_compact)
+
+# 26) Composite inflammatory burden score ------------------------------------
+build_pca_burden_score <- function(data, markers, analysis_label, score_name) {
+  markers <- markers[markers %in% names(data)]
+
+  if (length(markers) < 2L) {
+    return(list(
+      score = rep(NA_real_, nrow(data)),
+      loadings = tibble::tibble(
+        analysis = analysis_label,
+        score_name = score_name,
+        marker = markers,
+        loading_pc1 = NA_real_,
+        abs_loading = NA_real_,
+        variance_explained_pc1 = NA_real_,
+        n_complete = 0L
+      )
+    ))
+  }
+
+  cc <- stats::complete.cases(data[, markers, drop = FALSE])
+  n_complete <- sum(cc)
+
+  if (n_complete < max(25L, length(markers) + 5L)) {
+    return(list(
+      score = rep(NA_real_, nrow(data)),
+      loadings = tibble::tibble(
+        analysis = analysis_label,
+        score_name = score_name,
+        marker = markers,
+        loading_pc1 = NA_real_,
+        abs_loading = NA_real_,
+        variance_explained_pc1 = NA_real_,
+        n_complete = n_complete
+      )
+    ))
+  }
+
+  pca_fit <- stats::prcomp(data[cc, markers, drop = FALSE], center = TRUE, scale. = TRUE)
+  score_raw <- rep(NA_real_, nrow(data))
+  score_raw[cc] <- pca_fit$x[, 1]
+
+  mean_marker <- rowMeans(data[cc, markers, drop = FALSE], na.rm = TRUE)
+  orient_sign <- if (stats::cor(score_raw[cc], mean_marker, use = "complete.obs") < 0) -1 else 1
+
+  score_final <- make_z(score_raw * orient_sign)
+  loadings <- tibble::tibble(
+    analysis = analysis_label,
+    score_name = score_name,
+    marker = rownames(pca_fit$rotation),
+    loading_pc1 = orient_sign * pca_fit$rotation[, 1],
+    abs_loading = abs(orient_sign * pca_fit$rotation[, 1]),
+    variance_explained_pc1 = summary(pca_fit)$importance[2, 1],
+    n_complete = n_complete
+  ) %>%
+    dplyr::arrange(dplyr::desc(abs_loading))
+
+  list(score = score_final, loadings = loadings)
+}
+
+exam1_burden_markers <- c("z_log_crp1", "z_log_il61", "z_fib1", "z_log_ddimer1")
+exam1_burden <- build_pca_burden_score(
+  data = mesa_main,
+  markers = exam1_burden_markers,
+  analysis_label = "Exam 1",
+  score_name = "z_exam1_inflammatory_burden"
+)
+
+mesa_main <- mesa_main %>%
+  dplyr::mutate(z_exam1_inflammatory_burden = exam1_burden$score)
+
+exam4_burden_markers <- c(
+  "z_log_crp4", "z_fib4", "z_log_ddimer4", "z_log_icam4",
+  "z_epccd8la4", "z_epcwba4"
+)
+exam4_burden <- build_pca_burden_score(
+  data = exam4_immune_data,
+  markers = exam4_burden_markers,
+  analysis_label = "Exam 4 forward",
+  score_name = "z_exam4_multidomain_inflammatory_burden"
+)
+
+exam4_immune_data <- exam4_immune_data %>%
+  dplyr::mutate(z_exam4_multidomain_inflammatory_burden = exam4_burden$score)
+
+composite_burden_loadings <- dplyr::bind_rows(
+  exam1_burden$loadings,
+  exam4_burden$loadings
+) %>%
+  dplyr::mutate(
+    marker_label = dplyr::case_when(
+      marker %in% names(BIOMARKER_LABELS) ~ dplyr::recode(marker, !!!BIOMARKER_LABELS),
+      marker %in% names(exam4_marker_labels) ~ dplyr::recode(marker, !!!exam4_marker_labels),
+      TRUE ~ marker
+    )
+  )
+
+composite_burden_additive <- dplyr::bind_rows(
+  fit_additive_biomarker_cox(
+    data = mesa_main,
+    biomarker = "z_exam1_inflammatory_burden",
+    base_covars = base_covars,
+    time_var = "hf_time_days",
+    event_var = "hf_event",
+    race_var = "race_eth"
+  ) %>% dplyr::mutate(analysis = "Exam 1", score_name = "Exam 1 inflammatory burden"),
+  fit_additive_biomarker_cox(
+    data = exam4_immune_data,
+    biomarker = "z_exam4_multidomain_inflammatory_burden",
+    base_covars = exam4_base_covars,
+    time_var = "hf_time_days_e4",
+    event_var = "hf_event_e4",
+    race_var = "race_eth"
+  ) %>% dplyr::mutate(analysis = "Exam 4 forward", score_name = "Exam 4 multidomain inflammatory burden")
+) %>%
+  dplyr::mutate(
+    hr_ci = glue::glue(
+      "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+    ),
+    p_value_fmt = formatC(p_value, format = "g", digits = 3)
+  )
+
+composite_burden_interaction <- dplyr::bind_rows(
+  fit_interaction_cox(
+    data = mesa_main,
+    biomarker = "z_exam1_inflammatory_burden",
+    base_covars = base_covars,
+    time_var = "hf_time_days",
+    event_var = "hf_event",
+    race_var = "race_eth"
+  ) %>% dplyr::mutate(analysis = "Exam 1", score_name = "Exam 1 inflammatory burden"),
+  fit_interaction_cox(
+    data = exam4_immune_data,
+    biomarker = "z_exam4_multidomain_inflammatory_burden",
+    base_covars = exam4_base_covars,
+    time_var = "hf_time_days_e4",
+    event_var = "hf_event_e4",
+    race_var = "race_eth"
+  ) %>% dplyr::mutate(analysis = "Exam 4 forward", score_name = "Exam 4 multidomain inflammatory burden")
+) %>%
+  dplyr::mutate(
+    p_adj_holm = p.adjust(p_interaction, method = "holm"),
+    q_adj_bh = p.adjust(p_interaction, method = "BH"),
+    hr_ref_ci = glue::glue(
+      "{formatC(hr_ref, format = 'f', digits = 2)} ({formatC(lcl_ref, format = 'f', digits = 2)}, {formatC(ucl_ref, format = 'f', digits = 2)})"
+    ),
+    p_ref_fmt = formatC(p_ref, format = "g", digits = 3),
+    p_interaction_fmt = formatC(p_interaction, format = "g", digits = 3),
+    holm_p_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+    bh_q_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+  )
+
+composite_burden_additive_compact <- composite_burden_additive %>%
+  dplyr::transmute(
+    analysis,
+    score = score_name,
+    n,
+    events,
+    `HR (95% CI)` = hr_ci,
+    `Wald P` = p_value_fmt
+  )
+
+composite_burden_interaction_compact <- composite_burden_interaction %>%
+  dplyr::transmute(
+    analysis,
+    score = score_name,
+    n,
+    events,
+    `Ref HR (95% CI)` = hr_ref_ci,
+    `Ref Wald P` = p_ref_fmt,
+    `Interaction P` = p_interaction_fmt,
+    `Holm P` = holm_p_fmt,
+    `BH q` = bh_q_fmt
+  )
+
+readr::write_csv(
+  composite_burden_loadings,
+  fs::path(OUT_DIR, "mesa_hf_composite_inflammatory_burden_loadings.csv")
+)
+readr::write_csv(
+  composite_burden_additive,
+  fs::path(OUT_DIR, "mesa_hf_composite_inflammatory_burden_additive.csv")
+)
+readr::write_csv(
+  composite_burden_interaction,
+  fs::path(OUT_DIR, "mesa_hf_composite_inflammatory_burden_interaction.csv")
+)
+
+print(composite_burden_additive_compact)
+print(composite_burden_interaction_compact)
