@@ -1,0 +1,2 @@
+n_air_subset,n_geocode_restricted,pct_kept,rule
+6476,5911,91.27547869054972,"Numeric geocode accuracy restricted to high-accuracy range (<=2 for coded scales, else <= median)"

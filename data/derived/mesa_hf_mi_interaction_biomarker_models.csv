@@ -1,0 +1,5 @@
+biomarker,hr_ref,lcl_ref,ucl_ref,p_ref,p_interaction,family,biomarker_label,hr_ref_ci,p_ref_fmt,p_interaction_fmt
+z_log_crp1,1.1650888035100815,0.9991447196121175,1.3585938987812778,0.05128401132125847,NA,primary_inflammatory,CRP (log-z),"1.17 (1.00, 1.36)",0.0513,  NA
+z_log_il61,1.188020162787342,1.020153376721531,1.3835095186618462,0.026736048817220463,NA,primary_inflammatory,IL-6 (log-z),"1.19 (1.02, 1.38)",0.0267,  NA
+z_fib1,1.10794986634459,0.9539399075248576,1.2868241454727138,0.17896071398707775,NA,primary_inflammatory,Fibrinogen (z),"1.11 (0.95, 1.29)",0.179,  NA
+z_log_ddimer1,1.2633672007445402,1.0909482931200494,1.4630360521967094,0.0018546925099485656,NA,primary_inflammatory,D-dimer (log-z),"1.26 (1.09, 1.46)",0.00185,  NA
