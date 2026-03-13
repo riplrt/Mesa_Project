@@ -766,3 +766,302 @@ ggplot2::ggsave(
 )
 
 cat("\nFigures written to:", OUT_DIR, "\n")
+
+# 13) Group-specific biomarker slopes by race/ethnicity ----------------------
+extract_group_slopes <- function(data, biomarker, base_covars,
+                                 time_var = "hf_time_days",
+                                 event_var = "hf_event",
+                                 race_var = "race_eth") {
+  vars_needed <- c(time_var, event_var, biomarker, race_var, base_covars)
+
+  d <- data %>%
+    dplyr::select(dplyr::any_of(vars_needed)) %>%
+    dplyr::filter(stats::complete.cases(.), .data[[time_var]] > 0)
+
+  if (nrow(d) == 0L || sum(d[[event_var]], na.rm = TRUE) == 0L) return(tibble())
+
+  d <- d %>% dplyr::mutate(!!race_var := as.factor(.data[[race_var]]))
+  race_levels <- levels(d[[race_var]])
+  if (length(race_levels) < 1L) return(tibble())
+
+  rhs_base <- if (length(base_covars) > 0) paste(base_covars, collapse = " + ") else NULL
+  rhs_full <- paste(c(paste0(biomarker, " * ", race_var), rhs_base), collapse = " + ")
+  full_formula <- stats::as.formula(
+    paste0("survival::Surv(", time_var, ", ", event_var, ") ~ ", rhs_full)
+  )
+
+  fit <- tryCatch(
+    survival::coxph(full_formula, data = d, ties = "efron"),
+    error = function(e) NULL
+  )
+  if (is.null(fit)) return(tibble())
+
+  beta <- stats::coef(fit)
+  vcv  <- stats::vcov(fit)
+  z975 <- stats::qnorm(0.975)
+
+  beta_main_name <- biomarker
+  if (!beta_main_name %in% names(beta)) return(tibble())
+
+  race_effects <- purrr::map_dfr(race_levels, function(lvl) {
+    if (identical(lvl, race_levels[[1]])) {
+      est <- unname(beta[beta_main_name])
+      se  <- sqrt(unname(vcv[beta_main_name, beta_main_name]))
+      contrast_p <- NA_real_
+    } else {
+      int_name_1 <- paste0(biomarker, ":", race_var, lvl)
+      int_name_2 <- paste0(race_var, lvl, ":", biomarker)
+      int_name   <- dplyr::coalesce(
+        names(beta)[match(int_name_1, names(beta))],
+        names(beta)[match(int_name_2, names(beta))]
+      )
+
+      if (is.na(int_name)) {
+        return(tibble(
+          biomarker = biomarker,
+          race_level = lvl,
+          n = nrow(d),
+          events = sum(d[[event_var]], na.rm = TRUE),
+          hr = NA_real_,
+          lcl = NA_real_,
+          ucl = NA_real_,
+          wald_p = NA_real_,
+          contrast_p_vs_ref = NA_real_
+        ))
+      }
+
+      est <- unname(beta[beta_main_name] + beta[int_name])
+      var_est <- unname(
+        vcv[beta_main_name, beta_main_name] +
+          vcv[int_name, int_name] +
+          2 * vcv[beta_main_name, int_name]
+      )
+      se <- sqrt(var_est)
+
+      z_contrast <- unname(beta[int_name] / sqrt(vcv[int_name, int_name]))
+      contrast_p <- 2 * stats::pnorm(abs(z_contrast), lower.tail = FALSE)
+    }
+
+    z_wald <- est / se
+
+    tibble(
+      biomarker = biomarker,
+      race_level = lvl,
+      n = nrow(d),
+      events = sum(d[[event_var]], na.rm = TRUE),
+      hr = exp(est),
+      lcl = exp(est - z975 * se),
+      ucl = exp(est + z975 * se),
+      wald_p = 2 * stats::pnorm(abs(z_wald), lower.tail = FALSE),
+      contrast_p_vs_ref = contrast_p
+    )
+  })
+
+  race_effects
+}
+
+biomarkers_for_slopes <- unique(interaction_results$biomarker)
+
+ethnic_slope_table <- purrr::map_dfr(
+  biomarkers_for_slopes,
+  extract_group_slopes,
+  data = mesa_main,
+  base_covars = base_covars
+) %>%
+  dplyr::mutate(
+    race_label = dplyr::recode(as.character(race_level), !!!RACE_LABELS, .default = as.character(race_level)),
+    biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker)
+  ) %>%
+  dplyr::arrange(biomarker_label, race_level) %>%
+  dplyr::select(
+    biomarker,
+    biomarker_label,
+    race_level,
+    race_label,
+    n,
+    events,
+    hr,
+    lcl,
+    ucl,
+    wald_p,
+    contrast_p_vs_ref
+  )
+
+ethnic_slope_summary <- ethnic_slope_table %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    race = race_label,
+    `HR (95% CI)` = glue::glue("{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"),
+    `Wald P` = formatC(wald_p, format = "g", digits = 3),
+    `Contrast P vs White` = dplyr::if_else(
+      is.na(contrast_p_vs_ref),
+      NA_character_,
+      formatC(contrast_p_vs_ref, format = "g", digits = 3)
+    )
+  )
+
+readr::write_csv(ethnic_slope_table, fs::path(OUT_DIR, "mesa_hf_biomarker_group_specific_slopes.csv"))
+readr::write_csv(ethnic_slope_summary, fs::path(OUT_DIR, "mesa_hf_biomarker_group_specific_slopes_compact.csv"))
+
+interaction_results_group_specific <- ethnic_slope_table
+interaction_results_group_compact <- ethnic_slope_summary
+
+print(interaction_results_group_compact)
+
+# 14) Additive Cox models: biomarker + race/ethnicity + covariates ----------
+fit_additive_biomarker_cox <- function(data, biomarker, base_covars,
+                                       time_var = "hf_time_days",
+                                       event_var = "hf_event",
+                                       race_var = "race_eth") {
+  vars_needed <- c(time_var, event_var, biomarker, race_var, base_covars)
+
+  d <- data %>%
+    dplyr::select(dplyr::any_of(vars_needed)) %>%
+    dplyr::filter(stats::complete.cases(.), .data[[time_var]] > 0)
+
+  if (nrow(d) == 0L || sum(d[[event_var]], na.rm = TRUE) == 0L) {
+    return(tibble(
+      biomarker = biomarker,
+      n = nrow(d),
+      events = sum(d[[event_var]], na.rm = TRUE),
+      hr = NA_real_,
+      lcl = NA_real_,
+      ucl = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  rhs_base <- if (length(base_covars) > 0) paste(base_covars, collapse = " + ") else NULL
+  rhs <- paste(c(biomarker, race_var, rhs_base), collapse = " + ")
+  fml <- stats::as.formula(
+    paste0("survival::Surv(", time_var, ", ", event_var, ") ~ ", rhs)
+  )
+
+  fit <- tryCatch(
+    survival::coxph(fml, data = d, ties = "efron"),
+    error = function(e) NULL
+  )
+
+  if (is.null(fit)) {
+    return(tibble(
+      biomarker = biomarker,
+      n = nrow(d),
+      events = sum(d[[event_var]], na.rm = TRUE),
+      hr = NA_real_,
+      lcl = NA_real_,
+      ucl = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  td <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
+  tr <- td %>% dplyr::filter(.data$term == biomarker)
+
+  tibble(
+    biomarker = biomarker,
+    n = nrow(d),
+    events = sum(d[[event_var]], na.rm = TRUE),
+    hr = if (nrow(tr) == 1) tr$estimate else NA_real_,
+    lcl = if (nrow(tr) == 1) tr$conf.low else NA_real_,
+    ucl = if (nrow(tr) == 1) tr$conf.high else NA_real_,
+    p_value = if (nrow(tr) == 1) tr$p.value else NA_real_
+  )
+}
+
+biomarkers_additive <- c("z_log_crp1", "z_log_il61", "z_fib1", "z_log_ddimer1")
+biomarkers_additive <- biomarkers_additive[biomarkers_additive %in% names(mesa_main)]
+
+additive_biomarker_models <- purrr::map_dfr(
+  biomarkers_additive,
+  fit_additive_biomarker_cox,
+  data = mesa_main,
+  base_covars = base_covars
+) %>%
+  dplyr::mutate(
+    biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker)
+  ) %>%
+  dplyr::arrange(biomarker_label)
+
+additive_biomarker_models_compact <- additive_biomarker_models %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    n,
+    events,
+    `HR (95% CI)` = glue::glue(
+      "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+    ),
+    `Wald P` = formatC(p_value, format = "g", digits = 3)
+  )
+
+readr::write_csv(
+  additive_biomarker_models,
+  fs::path(OUT_DIR, "mesa_hf_additive_biomarker_models.csv")
+)
+readr::write_csv(
+  additive_biomarker_models_compact,
+  fs::path(OUT_DIR, "mesa_hf_additive_biomarker_models_compact.csv")
+)
+
+print(additive_biomarker_models_compact)
+
+# 15) Sequential adjustment models (Model 1-4) -------------------------------
+sequential_model_covars <- list(
+  "Model 1" = c("age1c", "sex", "site_factor"),
+  "Model 2" = c("age1c", "sex", "site_factor", "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c"),
+  "Model 3" = c("age1c", "sex", "site_factor", "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c", "cig1c", "educ1", "income1"),
+  "Model 4" = c("age1c", "sex", "site_factor", "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c", "cig1c", "educ1", "income1", "z_log_ntprobnp_e1", "z_log_troponin_e1")
+)
+
+keep_available_covars <- function(data, covars) {
+  covars[
+    covars %in% names(data) &
+      vapply(data[covars], function(x) sum(!is.na(x)) > 0, logical(1))
+  ]
+}
+
+additive_model_sequence <- purrr::map_dfr(
+  names(sequential_model_covars),
+  function(model_label) {
+    covars_this_model <- keep_available_covars(mesa_main, sequential_model_covars[[model_label]])
+
+    purrr::map_dfr(
+      biomarkers_additive,
+      fit_additive_biomarker_cox,
+      data = mesa_main,
+      base_covars = covars_this_model,
+      race_var = "race_eth"
+    ) %>%
+      dplyr::mutate(model = model_label)
+  }
+) %>%
+  dplyr::mutate(
+    model = factor(model, levels = c("Model 1", "Model 2", "Model 3", "Model 4")),
+    biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker)
+  ) %>%
+  dplyr::arrange(model, biomarker_label)
+
+additive_model_sequence_compact <- additive_model_sequence %>%
+  dplyr::transmute(
+    model,
+    biomarker = biomarker_label,
+    n,
+    events,
+    `HR (95% CI)` = glue::glue(
+      "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+    ),
+    `Wald P` = formatC(p_value, format = "g", digits = 3)
+  )
+
+readr::write_csv(
+  additive_model_sequence,
+  fs::path(OUT_DIR, "mesa_hf_additive_biomarker_model_sequence.csv")
+)
+readr::write_csv(
+  additive_model_sequence_compact,
+  fs::path(OUT_DIR, "mesa_hf_additive_biomarker_model_sequence_compact.csv")
+)
+
+additive_biomarker_models_sequential <- additive_model_sequence
+additive_biomarker_models_sequential_compact <- additive_model_sequence_compact
+
+print(additive_biomarker_models_sequential_compact)
