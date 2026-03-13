@@ -1,0 +1,8 @@
+model_small,model_large,df_diff,chisq,p_value,p_value_fmt
+M0,M1,NA,NA,NA,  NA
+M0,M2,NA,NA,NA,  NA
+M0,M3,NA,NA,NA,  NA
+M0,M4,NA,NA,NA,  NA
+M4,M5 (IL-6),NA,NA,NA,  NA
+M4,M5 (D-dimer),NA,NA,NA,  NA
+M4,M5 (IL-6 + D-dimer),NA,NA,NA,  NA

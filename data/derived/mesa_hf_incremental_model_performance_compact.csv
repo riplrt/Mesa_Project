@@ -1,0 +1,5 @@
+model,n,events,C-index,Time-dependent AUC (mean),Integrated Brier Score
+M0_clinical,6785,485,0.785,0.718,0.037
+M1_M0_plus_IL6,6785,485,0.788,0.685,0.036
+M2_M0_plus_Ddimer,6785,485,0.788,0.718,0.037
+M3_M0_plus_IL6_Ddimer,6785,485,0.790,0.685,0.036
