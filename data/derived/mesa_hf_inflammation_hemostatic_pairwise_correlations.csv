@@ -1,0 +1,7 @@
+marker_1,marker_2,n,pearson_r,spearman_rho,marker_1_label,marker_2_label
+z_fib1,z_log_ddimer1,6735,0.2913496516402399,0.2919627773485984,Fibrinogen (z),D-dimer (log-z)
+z_log_crp1,z_fib1,6717,0.5003862849600526,0.47905277571478994,CRP (log-z),Fibrinogen (z)
+z_log_crp1,z_log_ddimer1,6719,0.241681921129508,0.23131531622514792,CRP (log-z),D-dimer (log-z)
+z_log_crp1,z_log_il61,6585,0.5289851783515911,0.5328367528424502,CRP (log-z),IL-6 (log-z)
+z_log_il61,z_fib1,6578,0.430846453179361,0.42855444933234427,IL-6 (log-z),Fibrinogen (z)
+z_log_il61,z_log_ddimer1,6580,0.2908961165341227,0.3048431139386791,IL-6 (log-z),D-dimer (log-z)

@@ -1,0 +1,27 @@
+term,vif,n_complete,base_term,marker,marker_label
+age1c,NA,0,age1c,NA,NA
+bmi1c,NA,0,bmi1c,NA,NA
+cepgfr1c,NA,0,cepgfr1c,NA,NA
+chol1,NA,0,chol1,NA,NA
+cig1c,NA,0,cig1c,NA,NA
+dm031c,NA,0,dm031c,NA,NA
+educ1,NA,0,educ1,NA,NA
+hdl1,NA,0,hdl1,NA,NA
+htn1c,NA,0,htn1c,NA,NA
+income1,NA,0,income1,NA,NA
+ldl1,NA,0,ldl1,NA,NA
+race_eth2,NA,0,race_eth,NA,NA
+race_eth3,NA,0,race_eth,NA,NA
+race_eth4,NA,0,race_eth,NA,NA
+sbp1c,NA,0,sbp1c,NA,NA
+sex1,NA,0,sex,NA,NA
+site_factorB,NA,0,site_factor,NA,NA
+site_factorC,NA,0,site_factor,NA,NA
+site_factorD,NA,0,site_factor,NA,NA
+site_factorE,NA,0,site_factor,NA,NA
+site_factorF,NA,0,site_factor,NA,NA
+trig1,NA,0,trig1,NA,NA
+z_log_ddimer1,NA,0,z_log_ddimer1,z_log_ddimer1,D-dimer (log-z)
+z_log_il61,NA,0,z_log_il61,z_log_il61,IL-6 (log-z)
+z_log_ntprobnp_e1,NA,0,z_log_ntprobnp_e1,NA,NA
+z_log_troponin_e1,NA,0,z_log_troponin_e1,NA,NA
