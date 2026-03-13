@@ -1,0 +1,9 @@
+analysis,fibrinogen,subgroup,n,events,Group-specific HR (95% CI),Group Wald P,Contrast P vs reference,Global interaction P,Holm P,BH q
+Exam 1,z_fib1,No diabetes / No obesity,6306,449,"1.14 (1.00, 1.31)",0.0488,NA,0.681,0.963,0.681
+Exam 1,z_fib1,No diabetes / Obesity,6306,449,"1.22 (1.04, 1.44)",0.0126,0.519,0.681,0.963,0.681
+Exam 1,z_fib1,Diabetes / No obesity,6306,449,"1.18 (0.85, 1.64)",0.318,0.861,0.681,0.963,0.681
+Exam 1,z_fib1,Diabetes / Obesity,6306,449,"1.38 (1.04, 1.85)",0.0271,0.237,0.681,0.963,0.681
+Exam 4 forward,z_fib4,No diabetes / No obesity,350,22,"1.24 (0.61, 2.51)",0.55,NA,0.984,   1,0.984
+Exam 4 forward,z_fib4,No diabetes / Obesity,350,22,"1.00 (0.38, 2.64)",0.999,0.71,0.984,   1,0.984
+Exam 4 forward,z_fib4,Diabetes / No obesity,350,22,"1.48 (0.10, 21.10)",0.774,0.899,0.984,   1,0.984
+Exam 4 forward,z_fib4,Diabetes / Obesity,350,22,"1.08 (0.00, Inf)",   1,   1,0.984,   1,0.984

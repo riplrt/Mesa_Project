@@ -1,0 +1,3 @@
+biomarker,n,events,hr_ref,lcl_ref,ucl_ref,p_ref,p_interaction,analysis,score_name,p_adj_holm,q_adj_bh,hr_ref_ci,p_ref_fmt,p_interaction_fmt,holm_p_fmt,bh_q_fmt
+z_exam1_inflammatory_burden,6157,440,1.2951169583336646,1.1073196763415203,1.5147639580515506,0.0012148500560459222,0.6653065595198002,Exam 1,Exam 1 inflammatory burden,1,0.9999999999999706,"1.30 (1.11, 1.51)",0.00121,0.665,   1,   1
+z_exam4_multidomain_inflammatory_burden,71,3,0.8748192344381324,0,Inf,0.9999929195865502,0.9999999999999706,Exam 4 forward,Exam 4 multidomain inflammatory burden,1,0.9999999999999706,"0.87 (0.00, Inf)",   1,   1,   1,   1
