@@ -2202,3 +2202,583 @@ exam4_forward_interaction_models <- exam4_interaction_models
 
 print(exam4_additive_compact)
 print(exam4_interaction_compact)
+
+# 22) Black-White HF gap attenuation by biomarker elevation ------------------
+estimate_black_white_gap <- function(data, time_var, event_var, covars,
+                                     biomarkers = character(0), model_label = "") {
+  vars_needed <- unique(c(time_var, event_var, "race_bw", covars, biomarkers))
+
+  d <- data %>%
+    dplyr::select(dplyr::any_of(vars_needed)) %>%
+    dplyr::filter(stats::complete.cases(.), .data[[time_var]] > 0)
+
+  if (nrow(d) == 0L || sum(d[[event_var]], na.rm = TRUE) == 0L) {
+    return(tibble::tibble(
+      model = model_label,
+      n = nrow(d),
+      events = sum(d[[event_var]], na.rm = TRUE),
+      log_hr_black_vs_white = NA_real_,
+      hr_black_vs_white = NA_real_,
+      lcl = NA_real_,
+      ucl = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  rhs <- paste(c("race_bw", covars, biomarkers), collapse = " + ")
+  fml <- stats::as.formula(
+    paste0("survival::Surv(", time_var, ", ", event_var, ") ~ ", rhs)
+  )
+
+  fit <- tryCatch(
+    survival::coxph(fml, data = d, ties = "efron"),
+    error = function(e) NULL
+  )
+
+  if (is.null(fit)) {
+    return(tibble::tibble(
+      model = model_label,
+      n = nrow(d),
+      events = sum(d[[event_var]], na.rm = TRUE),
+      log_hr_black_vs_white = NA_real_,
+      hr_black_vs_white = NA_real_,
+      lcl = NA_real_,
+      ucl = NA_real_,
+      p_value = NA_real_
+    ))
+  }
+
+  td_log <- broom::tidy(fit, exponentiate = FALSE, conf.int = TRUE)
+  td_hr <- broom::tidy(fit, exponentiate = TRUE, conf.int = TRUE)
+
+  tr_log <- td_log %>% dplyr::filter(.data$term == "race_bwBlack")
+  tr_hr <- td_hr %>% dplyr::filter(.data$term == "race_bwBlack")
+
+  tibble::tibble(
+    model = model_label,
+    n = nrow(d),
+    events = sum(d[[event_var]], na.rm = TRUE),
+    log_hr_black_vs_white = if (nrow(tr_log) == 1) tr_log$estimate else NA_real_,
+    hr_black_vs_white = if (nrow(tr_hr) == 1) tr_hr$estimate else NA_real_,
+    lcl = if (nrow(tr_hr) == 1) tr_hr$conf.low else NA_real_,
+    ucl = if (nrow(tr_hr) == 1) tr_hr$conf.high else NA_real_,
+    p_value = if (nrow(tr_hr) == 1) tr_hr$p.value else NA_real_
+  )
+}
+
+summarize_gap_attenuation <- function(tab) {
+  base_log_hr <- tab$log_hr_black_vs_white[match("Clinical only", tab$model)]
+
+  tab %>%
+    dplyr::mutate(
+      pct_excess_risk_explained = 100 * (base_log_hr - log_hr_black_vs_white) / base_log_hr,
+      hr_ci = glue::glue(
+        "{formatC(hr_black_vs_white, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+      ),
+      p_value_fmt = formatC(p_value, format = "g", digits = 3)
+    )
+}
+
+# Exam 1: baseline inflammatory/hemostatic markers
+exam1_gap_data <- mesa_main %>%
+  dplyr::mutate(
+    race_label = dplyr::recode(as.character(race_eth), !!!RACE_LABELS, .default = as.character(race_eth))
+  ) %>%
+  dplyr::filter(race_label %in% c("White", "Black")) %>%
+  dplyr::mutate(race_bw = factor(race_label, levels = c("White", "Black")))
+
+exam1_covars_gap <- base_covars[base_covars %in% names(exam1_gap_data)]
+exam1_markers_gap <- c("z_log_crp1", "z_log_il61", "z_fib1", "z_log_ddimer1")
+exam1_markers_gap <- exam1_markers_gap[exam1_markers_gap %in% names(exam1_gap_data)]
+
+exam1_gap_models <- dplyr::bind_rows(
+  estimate_black_white_gap(
+    data = exam1_gap_data,
+    time_var = "hf_time_days",
+    event_var = "hf_event",
+    covars = exam1_covars_gap,
+    biomarkers = character(0),
+    model_label = "Clinical only"
+  ),
+  purrr::map_dfr(exam1_markers_gap, function(bm) {
+    estimate_black_white_gap(
+      data = exam1_gap_data,
+      time_var = "hf_time_days",
+      event_var = "hf_event",
+      covars = exam1_covars_gap,
+      biomarkers = bm,
+      model_label = paste0("Clinical + ", dplyr::recode(bm, !!!BIOMARKER_LABELS, .default = bm))
+    )
+  }),
+  estimate_black_white_gap(
+    data = exam1_gap_data,
+    time_var = "hf_time_days",
+    event_var = "hf_event",
+    covars = exam1_covars_gap,
+    biomarkers = exam1_markers_gap,
+    model_label = "Clinical + all Exam 1 markers"
+  )
+) %>%
+  summarize_gap_attenuation() %>%
+  dplyr::mutate(analysis = "Exam 1")
+
+# Exam 4-forward: core + immune phenotypes as separate analysis
+exam4_gap_data <- exam4_immune_data %>%
+  dplyr::mutate(
+    race_label = dplyr::recode(as.character(race_eth), !!!RACE_LABELS, .default = as.character(race_eth))
+  ) %>%
+  dplyr::filter(race_label %in% c("White", "Black")) %>%
+  dplyr::mutate(race_bw = factor(race_label, levels = c("White", "Black")))
+
+exam4_covars_gap <- exam4_base_covars[exam4_base_covars %in% names(exam4_gap_data) & exam4_base_covars != "race_eth"]
+exam4_core_gap <- c("z_log_crp4", "z_fib4", "z_log_ddimer4", "z_log_icam4")
+exam4_core_gap <- exam4_core_gap[exam4_core_gap %in% names(exam4_gap_data)]
+exam4_immune_gap <- immune_marker_z[immune_marker_z %in% names(exam4_gap_data)]
+
+exam4_gap_models <- dplyr::bind_rows(
+  estimate_black_white_gap(
+    data = exam4_gap_data,
+    time_var = "hf_time_days_e4",
+    event_var = "hf_event_e4",
+    covars = exam4_covars_gap,
+    biomarkers = character(0),
+    model_label = "Clinical only"
+  ),
+  purrr::map_dfr(exam4_core_gap, function(bm) {
+    estimate_black_white_gap(
+      data = exam4_gap_data,
+      time_var = "hf_time_days_e4",
+      event_var = "hf_event_e4",
+      covars = exam4_covars_gap,
+      biomarkers = bm,
+      model_label = paste0("Clinical + ", dplyr::recode(bm, !!!exam4_marker_labels, .default = bm))
+    )
+  }),
+  estimate_black_white_gap(
+    data = exam4_gap_data,
+    time_var = "hf_time_days_e4",
+    event_var = "hf_event_e4",
+    covars = exam4_covars_gap,
+    biomarkers = exam4_core_gap,
+    model_label = "Clinical + all Exam 4 core markers"
+  ),
+  estimate_black_white_gap(
+    data = exam4_gap_data,
+    time_var = "hf_time_days_e4",
+    event_var = "hf_event_e4",
+    covars = exam4_covars_gap,
+    biomarkers = exam4_immune_gap,
+    model_label = "Clinical + all immune phenotypes"
+  ),
+  estimate_black_white_gap(
+    data = exam4_gap_data,
+    time_var = "hf_time_days_e4",
+    event_var = "hf_event_e4",
+    covars = exam4_covars_gap,
+    biomarkers = unique(c(exam4_core_gap, exam4_immune_gap)),
+    model_label = "Clinical + core + immune phenotypes"
+  )
+) %>%
+  summarize_gap_attenuation() %>%
+  dplyr::mutate(analysis = "Exam 4 forward")
+
+black_white_gap_mediation <- dplyr::bind_rows(exam1_gap_models, exam4_gap_models)
+
+black_white_gap_mediation_compact <- black_white_gap_mediation %>%
+  dplyr::transmute(
+    analysis,
+    model,
+    n,
+    events,
+    `Black vs White HR (95% CI)` = hr_ci,
+    `Wald P` = p_value_fmt,
+    `% excess risk explained vs clinical-only` = formatC(pct_excess_risk_explained, format = "f", digits = 1)
+  )
+
+readr::write_csv(
+  black_white_gap_mediation,
+  fs::path(OUT_DIR, "mesa_hf_black_white_gap_mediation.csv")
+)
+readr::write_csv(
+  black_white_gap_mediation_compact,
+  fs::path(OUT_DIR, "mesa_hf_black_white_gap_mediation_compact.csv")
+)
+
+print(black_white_gap_mediation_compact)
+
+# 23) Decompose significant Exam 4 race × biomarker interactions -------------
+exam4_priority_markers <- c("z_log_ddimer4", "z_fib4")
+
+exam4_sig_interactions <- exam4_interaction_models %>%
+  dplyr::filter(
+    .data$biomarker %in% exam4_priority_markers |
+      (!is.na(.data$p_adj_holm) & .data$p_adj_holm < 0.05) |
+      (!is.na(.data$q_adj_bh) & .data$q_adj_bh < 0.05)
+  ) %>%
+  dplyr::arrange(.data$p_interaction)
+
+exam4_sig_markers <- unique(exam4_sig_interactions$biomarker)
+
+exam4_group_specific_effects <- purrr::map_dfr(
+  exam4_sig_markers,
+  extract_group_slopes,
+  data = exam4_immune_data,
+  base_covars = exam4_base_covars,
+  time_var = "hf_time_days_e4",
+  event_var = "hf_event_e4",
+  race_var = "race_eth"
+) %>%
+  dplyr::left_join(
+    exam4_sig_interactions %>%
+      dplyr::select(
+        biomarker,
+        p_interaction,
+        p_adj_holm,
+        q_adj_bh
+      ),
+    by = "biomarker"
+  ) %>%
+  dplyr::mutate(
+    biomarker_label = dplyr::recode(biomarker, !!!exam4_marker_labels, .default = biomarker),
+    race_label = dplyr::recode(as.character(race_level), !!!RACE_LABELS, .default = as.character(race_level)),
+    hr_ci = glue::glue(
+      "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+    ),
+    wald_p_fmt = formatC(wald_p, format = "g", digits = 3),
+    contrast_p_vs_ref_fmt = dplyr::if_else(
+      is.na(contrast_p_vs_ref),
+      NA_character_,
+      formatC(contrast_p_vs_ref, format = "g", digits = 3)
+    ),
+    interaction_p_fmt = formatC(p_interaction, format = "g", digits = 3),
+    holm_p_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+    bh_q_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+  ) %>%
+  dplyr::arrange(biomarker_label, race_level)
+
+exam4_group_specific_effects_compact <- exam4_group_specific_effects %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    race = race_label,
+    n,
+    events,
+    `Group-specific HR (95% CI)` = hr_ci,
+    `Group Wald P` = wald_p_fmt,
+    `Contrast P vs White` = contrast_p_vs_ref_fmt,
+    `Global interaction P` = interaction_p_fmt,
+    `Holm P` = holm_p_fmt,
+    `BH q` = bh_q_fmt
+  )
+
+exam4_ddimer4_fib4_group_effects <- exam4_group_specific_effects %>%
+  dplyr::filter(.data$biomarker %in% c("z_log_ddimer4", "z_fib4"))
+
+readr::write_csv(
+  exam4_group_specific_effects,
+  fs::path(OUT_DIR, "mesa_hf_exam4_significant_interactions_group_specific.csv")
+)
+readr::write_csv(
+  exam4_group_specific_effects_compact,
+  fs::path(OUT_DIR, "mesa_hf_exam4_significant_interactions_group_specific_compact.csv")
+)
+readr::write_csv(
+  exam4_ddimer4_fib4_group_effects,
+  fs::path(OUT_DIR, "mesa_hf_exam4_ddimer4_fib4_group_specific.csv")
+)
+
+print(exam4_group_specific_effects_compact)
+
+# 24) Decompose significant Exam 1 race × biomarker interactions -------------
+exam1_priority_markers <- c("z_log_il61", "z_log_ddimer1")
+
+exam1_interaction_pool <- interaction_results %>%
+  dplyr::filter(.data$biomarker %in% primary_biomarkers)
+
+exam1_sig_interactions <- exam1_interaction_pool %>%
+  dplyr::filter(
+    .data$biomarker %in% exam1_priority_markers |
+      (!is.na(.data$p_adj_holm) & .data$p_adj_holm < 0.05) |
+      (!is.na(.data$q_adj_bh) & .data$q_adj_bh < 0.05)
+  ) %>%
+  dplyr::arrange(.data$p_interaction)
+
+exam1_sig_markers <- unique(exam1_sig_interactions$biomarker)
+
+exam1_group_specific_effects <- purrr::map_dfr(
+  exam1_sig_markers,
+  extract_group_slopes,
+  data = mesa_main,
+  base_covars = base_covars,
+  time_var = "hf_time_days",
+  event_var = "hf_event",
+  race_var = "race_eth"
+) %>%
+  dplyr::left_join(
+    exam1_sig_interactions %>%
+      dplyr::select(
+        biomarker,
+        p_interaction,
+        p_adj_holm,
+        q_adj_bh
+      ),
+    by = "biomarker"
+  ) %>%
+  dplyr::mutate(
+    biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker),
+    race_label = dplyr::recode(as.character(race_level), !!!RACE_LABELS, .default = as.character(race_level)),
+    hr_ci = glue::glue(
+      "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+    ),
+    wald_p_fmt = formatC(wald_p, format = "g", digits = 3),
+    contrast_p_vs_ref_fmt = dplyr::if_else(
+      is.na(contrast_p_vs_ref),
+      NA_character_,
+      formatC(contrast_p_vs_ref, format = "g", digits = 3)
+    ),
+    interaction_p_fmt = formatC(p_interaction, format = "g", digits = 3),
+    holm_p_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+    bh_q_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+  ) %>%
+  dplyr::arrange(biomarker_label, race_level)
+
+exam1_group_specific_effects_compact <- exam1_group_specific_effects %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    race = race_label,
+    n,
+    events,
+    `Group-specific HR (95% CI)` = hr_ci,
+    `Group Wald P` = wald_p_fmt,
+    `Contrast P vs White` = contrast_p_vs_ref_fmt,
+    `Global interaction P` = interaction_p_fmt,
+    `Holm P` = holm_p_fmt,
+    `BH q` = bh_q_fmt
+  )
+
+exam1_il6_ddimer_group_effects <- exam1_group_specific_effects %>%
+  dplyr::filter(.data$biomarker %in% c("z_log_il61", "z_log_ddimer1"))
+
+readr::write_csv(
+  exam1_group_specific_effects,
+  fs::path(OUT_DIR, "mesa_hf_exam1_significant_interactions_group_specific.csv")
+)
+readr::write_csv(
+  exam1_group_specific_effects_compact,
+  fs::path(OUT_DIR, "mesa_hf_exam1_significant_interactions_group_specific_compact.csv")
+)
+readr::write_csv(
+  exam1_il6_ddimer_group_effects,
+  fs::path(OUT_DIR, "mesa_hf_exam1_il6_ddimer_group_specific.csv")
+)
+
+print(exam1_group_specific_effects_compact)
+
+# 25) Fibrinogen × metabolic comorbidity interaction (Exam 1 & Exam 4) ------
+prep_metabolic_groups <- function(data, dm_var = "dm031c", bmi_var = "bmi1c") {
+  data %>%
+    dplyr::mutate(
+      dm_num = suppressWarnings(as.numeric(as.character(.data[[dm_var]]))),
+      diabetes_status = dplyr::case_when(
+        !is.na(dm_num) & dm_num == 1 ~ "Diabetes",
+        !is.na(dm_num) & dm_num != 1 ~ "No diabetes",
+        TRUE ~ NA_character_
+      ),
+      obesity_status = dplyr::case_when(
+        is.na(.data[[bmi_var]]) ~ NA_character_,
+        .data[[bmi_var]] >= 30 ~ "Obesity",
+        TRUE ~ "No obesity"
+      ),
+      metabolic_status = dplyr::case_when(
+        diabetes_status == "No diabetes" & obesity_status == "No obesity" ~ "No diabetes / No obesity",
+        diabetes_status == "No diabetes" & obesity_status == "Obesity" ~ "No diabetes / Obesity",
+        diabetes_status == "Diabetes" & obesity_status == "No obesity" ~ "Diabetes / No obesity",
+        diabetes_status == "Diabetes" & obesity_status == "Obesity" ~ "Diabetes / Obesity",
+        TRUE ~ NA_character_
+      ),
+      diabetes_status = factor(diabetes_status, levels = c("No diabetes", "Diabetes")),
+      obesity_status = factor(obesity_status, levels = c("No obesity", "Obesity")),
+      metabolic_status = factor(
+        metabolic_status,
+        levels = c(
+          "No diabetes / No obesity",
+          "No diabetes / Obesity",
+          "Diabetes / No obesity",
+          "Diabetes / Obesity"
+        )
+      )
+    ) %>%
+    dplyr::select(-dm_num)
+}
+
+run_fibrinogen_metabolic <- function(data, fibrinogen_var, covars, time_var, event_var, analysis_label,
+                                     dm_var = "dm031c", bmi_var = "bmi1c") {
+  d <- prep_metabolic_groups(data, dm_var = dm_var, bmi_var = bmi_var)
+
+  covars_adj <- setdiff(covars, c(dm_var, bmi_var))
+
+  dm_test <- fit_interaction_cox(
+    data = d,
+    biomarker = fibrinogen_var,
+    base_covars = covars_adj,
+    time_var = time_var,
+    event_var = event_var,
+    race_var = "diabetes_status"
+  ) %>%
+    dplyr::mutate(interaction_type = "Fibrinogen × diabetes")
+
+  obesity_test <- fit_interaction_cox(
+    data = d,
+    biomarker = fibrinogen_var,
+    base_covars = covars_adj,
+    time_var = time_var,
+    event_var = event_var,
+    race_var = "obesity_status"
+  ) %>%
+    dplyr::mutate(interaction_type = "Fibrinogen × obesity")
+
+  metabolic_test <- fit_interaction_cox(
+    data = d,
+    biomarker = fibrinogen_var,
+    base_covars = covars_adj,
+    time_var = time_var,
+    event_var = event_var,
+    race_var = "metabolic_status"
+  ) %>%
+    dplyr::mutate(interaction_type = "Fibrinogen × metabolic phenotype (4-level)")
+
+  tests <- dplyr::bind_rows(dm_test, obesity_test, metabolic_test) %>%
+    dplyr::mutate(
+      analysis = analysis_label,
+      p_adj_holm = p.adjust(p_interaction, method = "holm"),
+      q_adj_bh = p.adjust(p_interaction, method = "BH"),
+      p_interaction_fmt = formatC(p_interaction, format = "g", digits = 3),
+      holm_p_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+      bh_q_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+    )
+
+  metabolic_slopes <- extract_group_slopes(
+    data = d,
+    biomarker = fibrinogen_var,
+    base_covars = covars_adj,
+    time_var = time_var,
+    event_var = event_var,
+    race_var = "metabolic_status"
+  ) %>%
+    dplyr::left_join(
+      tests %>%
+        dplyr::filter(interaction_type == "Fibrinogen × metabolic phenotype (4-level)") %>%
+        dplyr::select(p_interaction, p_adj_holm, q_adj_bh),
+      by = character()
+    ) %>%
+    dplyr::mutate(
+      analysis = analysis_label,
+      fibrinogen = fibrinogen_var,
+      subgroup = as.character(race_level),
+      hr_ci = glue::glue(
+        "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+      ),
+      wald_p_fmt = formatC(wald_p, format = "g", digits = 3),
+      contrast_p_vs_ref_fmt = dplyr::if_else(
+        is.na(contrast_p_vs_ref),
+        NA_character_,
+        formatC(contrast_p_vs_ref, format = "g", digits = 3)
+      ),
+      interaction_p_fmt = formatC(p_interaction, format = "g", digits = 3),
+      holm_p_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+      bh_q_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+    )
+
+  list(tests = tests, slopes = metabolic_slopes)
+}
+
+exam1_fib_metabolic <- run_fibrinogen_metabolic(
+  data = mesa_main,
+  fibrinogen_var = "z_fib1",
+  covars = base_covars,
+  time_var = "hf_time_days",
+  event_var = "hf_event",
+  analysis_label = "Exam 1"
+)
+
+exam4_fib_metabolic <- run_fibrinogen_metabolic(
+  data = exam4_immune_data,
+  fibrinogen_var = "z_fib4",
+  covars = exam4_base_covars,
+  time_var = "hf_time_days_e4",
+  event_var = "hf_event_e4",
+  analysis_label = "Exam 4 forward"
+)
+
+fibrinogen_metabolic_interaction_tests <- dplyr::bind_rows(
+  exam1_fib_metabolic$tests,
+  exam4_fib_metabolic$tests
+) %>%
+  dplyr::select(
+    analysis,
+    interaction_type,
+    n,
+    events,
+    p_interaction,
+    p_adj_holm,
+    q_adj_bh,
+    p_interaction_fmt,
+    holm_p_fmt,
+    bh_q_fmt
+  )
+
+fibrinogen_metabolic_group_slopes <- dplyr::bind_rows(
+  exam1_fib_metabolic$slopes,
+  exam4_fib_metabolic$slopes
+) %>%
+  dplyr::select(
+    analysis,
+    fibrinogen,
+    subgroup,
+    n,
+    events,
+    hr,
+    lcl,
+    ucl,
+    wald_p,
+    contrast_p_vs_ref,
+    p_interaction,
+    p_adj_holm,
+    q_adj_bh,
+    hr_ci,
+    wald_p_fmt,
+    contrast_p_vs_ref_fmt,
+    interaction_p_fmt,
+    holm_p_fmt,
+    bh_q_fmt
+  )
+
+fibrinogen_metabolic_group_slopes_compact <- fibrinogen_metabolic_group_slopes %>%
+  dplyr::transmute(
+    analysis,
+    fibrinogen,
+    subgroup,
+    n,
+    events,
+    `Group-specific HR (95% CI)` = hr_ci,
+    `Group Wald P` = wald_p_fmt,
+    `Contrast P vs reference` = contrast_p_vs_ref_fmt,
+    `Global interaction P` = interaction_p_fmt,
+    `Holm P` = holm_p_fmt,
+    `BH q` = bh_q_fmt
+  )
+
+readr::write_csv(
+  fibrinogen_metabolic_interaction_tests,
+  fs::path(OUT_DIR, "mesa_hf_fibrinogen_metabolic_interaction_tests.csv")
+)
+readr::write_csv(
+  fibrinogen_metabolic_group_slopes,
+  fs::path(OUT_DIR, "mesa_hf_fibrinogen_metabolic_group_slopes.csv")
+)
+readr::write_csv(
+  fibrinogen_metabolic_group_slopes_compact,
+  fs::path(OUT_DIR, "mesa_hf_fibrinogen_metabolic_group_slopes_compact.csv")
+)
+
+print(fibrinogen_metabolic_interaction_tests)
+print(fibrinogen_metabolic_group_slopes_compact)
