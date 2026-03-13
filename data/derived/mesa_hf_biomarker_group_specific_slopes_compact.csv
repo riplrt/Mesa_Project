@@ -1,0 +1,17 @@
+biomarker,race,HR (95% CI),Wald P,Contrast P vs White
+CRP (log-z),White,"1.16 (0.99, 1.36)",0.0626,NA
+CRP (log-z),Chinese American,"1.14 (0.76, 1.71)",0.528,0.929
+CRP (log-z),Black,"1.12 (0.93, 1.33)",0.226,0.722
+CRP (log-z),Hispanic,"1.13 (0.90, 1.41)",0.295,0.826
+D-dimer (log-z),White,"1.28 (1.10, 1.48)",0.00139,NA
+D-dimer (log-z),Chinese American,"1.25 (0.90, 1.73)",0.184,0.894
+D-dimer (log-z),Black,"1.10 (0.92, 1.31)",0.289,0.198
+D-dimer (log-z),Hispanic,"1.07 (0.87, 1.32)",0.53,0.171
+Fibrinogen (z),White,"1.12 (0.96, 1.31)",0.134,NA
+Fibrinogen (z),Chinese American,"1.26 (0.83, 1.91)",0.278,0.615
+Fibrinogen (z),Black,"1.08 (0.92, 1.27)",0.332,0.734
+Fibrinogen (z),Hispanic,"1.17 (0.98, 1.41)",0.0882,0.717
+IL-6 (log-z),White,"1.20 (1.03, 1.41)",0.02,NA
+IL-6 (log-z),Chinese American,"1.02 (0.69, 1.50)",0.93,0.431
+IL-6 (log-z),Black,"1.11 (0.92, 1.35)",0.273,0.524
+IL-6 (log-z),Hispanic,"1.40 (1.12, 1.74)",0.00258,0.259
