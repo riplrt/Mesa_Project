@@ -2061,3 +2061,144 @@ environmental_robustness_compact_table <- environmental_robustness_compact
 
 print(geocode_restriction_summary)
 print(environmental_robustness_compact)
+
+# 21) Separate Exam 4-forward analysis (biomarkers + immune phenotypes) -----
+immune_cell_vars <- c(
+  "abbaspha4", "abeospha4", "ablympha4", "abmoncya4", "abneupha4",
+  "epcbla4", "epccd8la4", "epccd8ma4", "epccd8na4", "epcwba4"
+)
+immune_cell_vars <- immune_cell_vars[immune_cell_vars %in% names(mesa_exam4_landmark)]
+
+exam4_core_markers <- c("z_log_crp4", "z_fib4", "z_log_ddimer4", "z_log_icam4")
+exam4_core_markers <- exam4_core_markers[exam4_core_markers %in% names(mesa_exam4_landmark)]
+
+exam4_immune_data <- mesa_exam4_landmark %>%
+  dplyr::mutate(
+    hf_event_e4 = if_else(!is.na(chf) & chf == 1, 1L, 0L),
+    hf_time_days_e4 = dplyr::case_when(
+      hf_event_e4 == 1L ~ chftt,
+      TRUE ~ fuptt
+    )
+  ) %>%
+  dplyr::mutate(
+    dplyr::across(
+      dplyr::any_of(immune_cell_vars),
+      make_z,
+      .names = "z_{.col}"
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(race_eth),
+    !is.na(hf_time_days_e4),
+    hf_time_days_e4 > 0,
+    is.na(exall) | exall == 0
+  )
+
+immune_marker_z <- paste0("z_", immune_cell_vars)
+immune_marker_z <- immune_marker_z[immune_marker_z %in% names(exam4_immune_data)]
+
+exam4_all_markers <- c(exam4_core_markers, immune_marker_z)
+
+exam4_base_covars <- c(
+  "age1c", "sex", "race_eth", "site_factor",
+  "bmi1c", "sbp1c", "htn1c", "dm031c", "cepgfr1c",
+  "educ1", "income1", "cig1c", "pkyrs1c", "lvef_baseline"
+)
+exam4_base_covars <- exam4_base_covars[
+  exam4_base_covars %in% names(exam4_immune_data) &
+    vapply(exam4_immune_data[exam4_base_covars], function(x) sum(!is.na(x)) > 0, logical(1))
+]
+
+immune_labels <- setNames(
+  paste0(stringr::str_to_upper(immune_cell_vars), " (z)"),
+  paste0("z_", immune_cell_vars)
+)
+
+exam4_marker_labels <- c(
+  "z_log_crp4" = "CRP4 (log-z)",
+  "z_fib4" = "FIB4 (z)",
+  "z_log_ddimer4" = "DDIMER4 (log-z)",
+  "z_log_icam4" = "ICAM4 (log-z)",
+  immune_labels
+)
+
+exam4_additive_models <- purrr::map_dfr(
+  exam4_all_markers,
+  fit_additive_biomarker_cox,
+  data = exam4_immune_data,
+  base_covars = exam4_base_covars,
+  time_var = "hf_time_days_e4",
+  event_var = "hf_event_e4",
+  race_var = "race_eth"
+) %>%
+  dplyr::mutate(
+    biomarker_label = dplyr::recode(biomarker, !!!exam4_marker_labels, .default = biomarker),
+    analysis = "Exam4-forward separate analysis"
+  ) %>%
+  dplyr::arrange(biomarker_label)
+
+exam4_interaction_models <- purrr::map_dfr(
+  exam4_all_markers,
+  fit_interaction_cox,
+  data = exam4_immune_data,
+  base_covars = exam4_base_covars,
+  time_var = "hf_time_days_e4",
+  event_var = "hf_event_e4",
+  race_var = "race_eth"
+) %>%
+  dplyr::mutate(
+    family = "exam4_biomarker_immune",
+    p_adj_holm = p.adjust(p_interaction, method = "holm"),
+    q_adj_bh = p.adjust(p_interaction, method = "BH"),
+    biomarker_label = dplyr::recode(biomarker, !!!exam4_marker_labels, .default = biomarker),
+    analysis = "Exam4-forward separate analysis"
+  ) %>%
+  dplyr::arrange(biomarker_label)
+
+exam4_additive_compact <- exam4_additive_models %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    n,
+    events,
+    `HR (95% CI)` = glue::glue(
+      "{formatC(hr, format = 'f', digits = 2)} ({formatC(lcl, format = 'f', digits = 2)}, {formatC(ucl, format = 'f', digits = 2)})"
+    ),
+    `Wald P` = formatC(p_value, format = "g", digits = 3)
+  )
+
+exam4_interaction_compact <- exam4_interaction_models %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    n,
+    events,
+    `Ref HR (95% CI)` = glue::glue(
+      "{formatC(hr_ref, format = 'f', digits = 2)} ({formatC(lcl_ref, format = 'f', digits = 2)}, {formatC(ucl_ref, format = 'f', digits = 2)})"
+    ),
+    `Ref Wald P` = formatC(p_ref, format = "g", digits = 3),
+    `Interaction P` = formatC(p_interaction, format = "g", digits = 3),
+    `Holm P` = formatC(p_adj_holm, format = "g", digits = 3),
+    `BH q` = formatC(q_adj_bh, format = "g", digits = 3)
+  )
+
+readr::write_csv(
+  exam4_additive_models,
+  fs::path(OUT_DIR, "mesa_hf_exam4_forward_additive_models.csv")
+)
+readr::write_csv(
+  exam4_interaction_models,
+  fs::path(OUT_DIR, "mesa_hf_exam4_forward_interaction_models.csv")
+)
+readr::write_csv(
+  exam4_additive_compact,
+  fs::path(OUT_DIR, "mesa_hf_exam4_forward_additive_models_compact.csv")
+)
+readr::write_csv(
+  exam4_interaction_compact,
+  fs::path(OUT_DIR, "mesa_hf_exam4_forward_interaction_models_compact.csv")
+)
+
+exam4_forward_additive_models <- exam4_additive_models
+exam4_forward_interaction_models <- exam4_interaction_models
+
+print(exam4_additive_compact)
+print(exam4_interaction_compact)
