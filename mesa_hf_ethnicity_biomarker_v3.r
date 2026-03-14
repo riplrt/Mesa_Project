@@ -70,6 +70,248 @@ read_mesa_csv <- function(path, keep = NULL, guess_max = 20000) {
   dat
 }
 
+
+# 29) Secondary cardiac biomarker family + required incremental evidence -----
+
+secondary_family_markers <- c("z_log_ntprobnp_e1", "z_log_troponin_e1")
+secondary_family_markers <- secondary_family_markers[
+  secondary_family_markers %in% names(mesa_main) &
+    vapply(mesa_main[secondary_family_markers], function(x) sum(!is.na(x)) > 0, logical(1))
+]
+
+secondary_family_interactions <- if (length(secondary_family_markers) > 0) {
+  run_scan(
+    biomarkers = secondary_family_markers,
+    family_label = "secondary_cardiac",
+    data = mesa_main,
+    base_covars = base_covars
+  ) %>%
+    dplyr::mutate(
+      biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker),
+      hr_ref_ci = glue::glue(
+        "{formatC(hr_ref, format = 'f', digits = 2)} ({formatC(lcl_ref, format = 'f', digits = 2)}, {formatC(ucl_ref, format = 'f', digits = 2)})"
+      ),
+      p_ref_fmt = formatC(p_ref, format = "g", digits = 3),
+      p_int_fmt = formatC(p_interaction, format = "g", digits = 3),
+      p_holm_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+      q_bh_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+    )
+} else {
+  tibble::tibble()
+}
+
+secondary_family_interactions_compact <- secondary_family_interactions %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    n,
+    events,
+    `Ref HR (95% CI)` = hr_ref_ci,
+    `Ref Wald P` = p_ref_fmt,
+    `Interaction P` = p_int_fmt,
+    `Holm P` = p_holm_fmt,
+    `BH q` = q_bh_fmt
+  )
+
+readr::write_csv(
+  secondary_family_interactions,
+  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_family_interactions.csv")
+)
+readr::write_csv(
+  secondary_family_interactions_compact,
+  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_family_interactions_compact.csv")
+)
+
+# Required incremental sequence: assess IL-6 and D-dimer beyond cardiac markers
+required_incremental_vars <- unique(c(
+  "hf_time_days", "hf_event",
+  "age1c", "sex", "race_eth", "site_factor",
+  "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c",
+  "cig1c", "educ1", "income1",
+  "z_log_ntprobnp_e1", "z_log_troponin_e1",
+  "z_log_il61", "z_log_ddimer1"
+))
+
+required_incremental_vars <- required_incremental_vars[required_incremental_vars %in% names(mesa_main)]
+
+incremental_cardiac_data <- mesa_main %>%
+  dplyr::select(dplyr::any_of(required_incremental_vars)) %>%
+  dplyr::filter(
+    !is.na(hf_time_days),
+    !is.na(hf_event),
+    hf_time_days > 0,
+    hf_event %in% c(0, 1)
+  )
+
+clinical_terms <- c(
+  "age1c", "sex", "race_eth", "site_factor",
+  "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c",
+  "cig1c", "educ1", "income1"
+)
+clinical_terms <- clinical_terms[clinical_terms %in% names(incremental_cardiac_data)]
+
+cardiac_terms <- c("z_log_ntprobnp_e1", "z_log_troponin_e1")
+cardiac_terms <- cardiac_terms[cardiac_terms %in% names(incremental_cardiac_data)]
+
+inflamm_terms <- c("z_log_il61", "z_log_ddimer1")
+inflamm_terms <- inflamm_terms[inflamm_terms %in% names(incremental_cardiac_data)]
+
+rhs_c0 <- paste(clinical_terms, collapse = " + ")
+rhs_c1 <- paste(c(clinical_terms, cardiac_terms), collapse = " + ")
+rhs_c2 <- paste(c(clinical_terms, cardiac_terms, "z_log_il61"), collapse = " + ")
+rhs_c3 <- paste(c(clinical_terms, cardiac_terms, "z_log_ddimer1"), collapse = " + ")
+rhs_c4 <- paste(c(clinical_terms, cardiac_terms, inflamm_terms), collapse = " + ")
+
+sec_n_complete <- function(data, rhs) {
+  vars <- c("hf_time_days", "hf_event", all.vars(stats::as.formula(paste0("~", rhs))))
+  data %>%
+    dplyr::select(dplyr::any_of(vars)) %>%
+    dplyr::filter(
+      dplyr::if_all(dplyr::everything(), ~ !is.na(.x)),
+      hf_time_days > 0,
+      hf_event %in% c(0, 1)
+    ) %>%
+    nrow()
+}
+
+sec_fit_safe <- function(data, rhs) {
+  n_cc <- sec_n_complete(data, rhs)
+  if (n_cc == 0L) return(NULL)
+  if (exists("fit_incremental_cox")) {
+    fit_incremental_cox(data, rhs, time_var = "hf_time_days", event_var = "hf_event")
+  } else {
+    fml <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs))
+    dat <- data %>%
+      dplyr::select(dplyr::any_of(c("hf_time_days", "hf_event", all.vars(stats::as.formula(paste0("~", rhs)))))) %>%
+      dplyr::filter(dplyr::if_all(dplyr::everything(), ~ !is.na(.x)), hf_time_days > 0, hf_event %in% c(0, 1))
+    survival::coxph(fml, data = dat, ties = "efron", x = TRUE, y = TRUE)
+  }
+}
+
+secondary_incremental_models <- list(
+  C0_clinical = sec_fit_safe(incremental_cardiac_data, rhs_c0),
+  C1_clinical_plus_cardiac = sec_fit_safe(incremental_cardiac_data, rhs_c1),
+  C2_cardiac_plus_IL6 = sec_fit_safe(incremental_cardiac_data, rhs_c2),
+  C3_cardiac_plus_Ddimer = sec_fit_safe(incremental_cardiac_data, rhs_c3),
+  C4_cardiac_plus_IL6_Ddimer = sec_fit_safe(incremental_cardiac_data, rhs_c4)
+)
+secondary_incremental_models <- purrr::compact(secondary_incremental_models)
+
+secondary_incremental_performance <- purrr::imap_dfr(
+  secondary_incremental_models,
+  function(fit, nm) {
+    tibble::tibble(
+      model = nm,
+      n = stats::nobs(fit),
+      events = sum(fit$y[, 2], na.rm = TRUE),
+      c_index = unname(summary(fit)$concordance[1])
+    )
+  }
+)
+
+if (exists("make_step_surv_fun") && exists("predict_risk_at_time") &&
+    exists("calc_td_auc_ipcw") && exists("calc_brier_ipcw") && exists("calc_ibs")) {
+  g_fit_sec <- survival::survfit(survival::Surv(hf_time_days, 1 - hf_event) ~ 1, data = incremental_cardiac_data)
+  g_hat_sec <- make_step_surv_fun(g_fit_sec)
+
+  event_times_sec <- incremental_cardiac_data$hf_time_days[incremental_cardiac_data$hf_event == 1]
+  eval_times_sec <- stats::quantile(event_times_sec, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
+  eval_times_sec <- as.numeric(unique(eval_times_sec[is.finite(eval_times_sec) & eval_times_sec > 0]))
+
+  sec_time_metrics <- purrr::imap_dfr(
+    secondary_incremental_models,
+    function(fit, model_name) {
+      purrr::map_dfr(eval_times_sec, function(t_now) {
+        risk_t <- predict_risk_at_time(fit, incremental_cardiac_data, t_now)
+        tibble::tibble(
+          model = model_name,
+          time = t_now,
+          td_auc = calc_td_auc_ipcw(
+            score = risk_t,
+            time = incremental_cardiac_data$hf_time_days,
+            event = incremental_cardiac_data$hf_event,
+            t = t_now,
+            g_hat_fun = g_hat_sec
+          ),
+          brier = calc_brier_ipcw(
+            risk = risk_t,
+            time = incremental_cardiac_data$hf_time_days,
+            event = incremental_cardiac_data$hf_event,
+            t = t_now,
+            g_hat_fun = g_hat_sec
+          )
+        )
+      })
+    }
+  )
+
+  sec_auc_summary <- sec_time_metrics %>% dplyr::summarize(td_auc_mean = mean(td_auc, na.rm = TRUE), .by = model)
+  sec_ibs_summary <- sec_time_metrics %>% dplyr::summarize(integrated_brier = calc_ibs(time, brier), .by = model)
+
+  secondary_incremental_performance <- secondary_incremental_performance %>%
+    dplyr::left_join(sec_auc_summary, by = "model") %>%
+    dplyr::left_join(sec_ibs_summary, by = "model")
+
+  readr::write_csv(
+    sec_time_metrics,
+    fs::path(OUT_DIR, "mesa_hf_secondary_incremental_time_metrics.csv")
+  )
+}
+
+secondary_incremental_lrt <- dplyr::bind_rows(
+  compare_lrt(
+    secondary_incremental_models$C0_clinical,
+    secondary_incremental_models$C1_clinical_plus_cardiac,
+    "C0 clinical",
+    "C1 + NT-proBNP + troponin"
+  ),
+  compare_lrt(
+    secondary_incremental_models$C1_clinical_plus_cardiac,
+    secondary_incremental_models$C2_cardiac_plus_IL6,
+    "C1 + cardiac",
+    "C2 + IL-6"
+  ),
+  compare_lrt(
+    secondary_incremental_models$C1_clinical_plus_cardiac,
+    secondary_incremental_models$C3_cardiac_plus_Ddimer,
+    "C1 + cardiac",
+    "C3 + D-dimer"
+  ),
+  compare_lrt(
+    secondary_incremental_models$C1_clinical_plus_cardiac,
+    secondary_incremental_models$C4_cardiac_plus_IL6_Ddimer,
+    "C1 + cardiac",
+    "C4 + IL-6 + D-dimer"
+  )
+) %>%
+  dplyr::mutate(p_value_fmt = formatC(p_value, format = "g", digits = 3))
+
+secondary_incremental_performance_compact <- secondary_incremental_performance %>%
+  dplyr::mutate(
+    `C-index` = formatC(c_index, format = "f", digits = 3),
+    `Time-dependent AUC (mean)` = dplyr::if_else(is.na(td_auc_mean), NA_character_, formatC(td_auc_mean, format = "f", digits = 3)),
+    `Integrated Brier Score` = dplyr::if_else(is.na(integrated_brier), NA_character_, formatC(integrated_brier, format = "f", digits = 3))
+  ) %>%
+  dplyr::select(model, n, events, `C-index`, `Time-dependent AUC (mean)`, `Integrated Brier Score`)
+
+readr::write_csv(
+  secondary_incremental_performance,
+  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_performance.csv")
+)
+readr::write_csv(
+  secondary_incremental_performance_compact,
+  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_performance_compact.csv")
+)
+readr::write_csv(
+  secondary_incremental_lrt,
+  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_lrt.csv")
+)
+
+secondary_cardiac_family_interactions <- secondary_family_interactions
+secondary_cardiac_family_interactions_compact <- secondary_family_interactions_compact
+secondary_cardiac_incremental_models <- secondary_incremental_models
+secondary_cardiac_incremental_performance <- secondary_incremental_performance
+secondary_cardiac_incremental_performance_compact <- secondary_incremental_performance_compact
+secondary_cardiac_incremental_lrt <- secondary_incremental_lrt
 ensure_cols <- function(dat, cols, fill = NA) {
   for (nm in cols) {
     if (!nm %in% names(dat)) dat[[nm]] <- fill
@@ -3064,9 +3306,6 @@ if (nrow(ph_results) == 0) {
 # End PH diagnostics
 
 # 28) Influence and residual diagnostics (targeted: Exam 4 D-dimer) ---------
-# Rationale: focused leverage/influence check for the Exam 4 D-dimer model
-# where event counts are limited and inversion risk is highest.
-
 exam4_infl_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influence_diagnostics.csv")
 exam4_infl_flagged_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influential_observations.csv")
 exam4_infl_loo_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influence_loo_black_effect.csv")
