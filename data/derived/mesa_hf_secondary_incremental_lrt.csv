@@ -1,0 +1,5 @@
+model_small,model_large,df_diff,chisq,p_value
+C0 clinical,C1 + NT-proBNP + troponin,NA,NA,NA
+C1 + cardiac,C2 + IL-6,NA,NA,NA
+C1 + cardiac,C3 + D-dimer,NA,NA,NA
+C1 + cardiac,C4 + IL-6 + D-dimer,NA,NA,NA
