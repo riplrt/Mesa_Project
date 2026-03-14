@@ -2972,3 +2972,4 @@ readr::write_csv(
 
 print(composite_burden_additive_compact)
 print(composite_burden_interaction_compact)
+
