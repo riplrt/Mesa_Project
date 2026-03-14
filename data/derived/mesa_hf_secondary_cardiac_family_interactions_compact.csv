@@ -1,0 +1,3 @@
+biomarker,n,events,Ref HR (95% CI),Ref Wald P,Interaction P,Holm P,BH q
+NT-proBNP (log-z),6319,450,"2.11 (1.78, 2.52)",3.86e-17,0.772,0.991,0.772
+Troponin (log-z),6320,450,"1.60 (1.40, 1.84)",1.14e-11,0.495,0.991,0.772

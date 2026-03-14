@@ -1,0 +1,6 @@
+model,n,events,C-index
+C0_clinical,456,456,0.785
+C1_clinical_plus_cardiac,456,456,0.832
+C2_cardiac_plus_IL6,448,448,0.830
+C3_cardiac_plus_Ddimer,455,455,0.833
+C4_cardiac_plus_IL6_Ddimer,447,447,0.832

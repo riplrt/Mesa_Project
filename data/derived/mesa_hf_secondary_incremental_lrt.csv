@@ -1,5 +1,5 @@
-model_small,model_large,df_diff,chisq,p_value
-C0 clinical,C1 + NT-proBNP + troponin,NA,NA,NA
-C1 + cardiac,C2 + IL-6,NA,NA,NA
-C1 + cardiac,C3 + D-dimer,NA,NA,NA
-C1 + cardiac,C4 + IL-6 + D-dimer,NA,NA,NA
+model_small,model_large,df_diff,chisq,p_value,status,p_value_fmt,n_pairwise,events_pairwise
+C0 clinical,C1 + NT-proBNP + troponin,2,231.68930567857842,4.8899735936817546e-51,ok,4.89e-51,6388,456
+C1 + cardiac,C2 + IL-6,1,3.3688898739583237,0.0664385098705683,ok,0.0664,6234,448
+C1 + cardiac,C3 + D-dimer,1,3.6243424820922883,0.05694006760228599,ok,0.0569,6366,455
+C1 + cardiac,C4 + IL-6 + D-dimer,2,4.808849237291724,0.09031744763756092,ok,0.0903,6224,447
