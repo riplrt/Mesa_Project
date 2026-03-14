@@ -1,0 +1,5 @@
+model,n,events,log_hr_black_vs_white,hr_black_vs_white,lcl,ucl,p_value,pct_excess_risk_explained,hr_ci,p_value_fmt,analysis,mediator,mediator_var
+Clinical only,4151,319,-0.09414318504644917,0.9101524326920175,0.6849478315506283,1.2094022531027862,0.5162783492025075,-0,"0.91 (0.68, 1.21)",0.516,Exam 1,Immune Tone index,z_exam1_inflammatory_burden
+Clinical + Immune Tone index,4030,310,-0.1385855682358078,0.8705887533380963,0.6512710814879702,1.163762370205563,0.3493537742546905,-47.20722287803549,"0.87 (0.65, 1.16)",0.349,Exam 1,Immune Tone index,z_exam1_inflammatory_burden
+Clinical only,3055,222,-0.14339542975785483,0.8664113962998419,0.6250538610581529,1.2009664357043335,0.38938242203980955,-0,"0.87 (0.63, 1.20)",0.389,Exam 4 forward,Immune Tone index,z_exam4_multidomain_inflammatory_burden
+Clinical + Immune Tone index,47,2,20.47591300497231,780865130.7349677,0,Inf,0.9994983328820096,14379.334452673304,"780865130.73 (0.00, Inf)",0.999,Exam 4 forward,Immune Tone index,z_exam4_multidomain_inflammatory_burden
