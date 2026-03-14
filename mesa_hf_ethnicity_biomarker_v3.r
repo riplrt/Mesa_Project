@@ -70,248 +70,6 @@ read_mesa_csv <- function(path, keep = NULL, guess_max = 20000) {
   dat
 }
 
-
-# 29) Secondary cardiac biomarker family + required incremental evidence -----
-
-secondary_family_markers <- c("z_log_ntprobnp_e1", "z_log_troponin_e1")
-secondary_family_markers <- secondary_family_markers[
-  secondary_family_markers %in% names(mesa_main) &
-    vapply(mesa_main[secondary_family_markers], function(x) sum(!is.na(x)) > 0, logical(1))
-]
-
-secondary_family_interactions <- if (length(secondary_family_markers) > 0) {
-  run_scan(
-    biomarkers = secondary_family_markers,
-    family_label = "secondary_cardiac",
-    data = mesa_main,
-    base_covars = base_covars
-  ) %>%
-    dplyr::mutate(
-      biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker),
-      hr_ref_ci = glue::glue(
-        "{formatC(hr_ref, format = 'f', digits = 2)} ({formatC(lcl_ref, format = 'f', digits = 2)}, {formatC(ucl_ref, format = 'f', digits = 2)})"
-      ),
-      p_ref_fmt = formatC(p_ref, format = "g", digits = 3),
-      p_int_fmt = formatC(p_interaction, format = "g", digits = 3),
-      p_holm_fmt = formatC(p_adj_holm, format = "g", digits = 3),
-      q_bh_fmt = formatC(q_adj_bh, format = "g", digits = 3)
-    )
-} else {
-  tibble::tibble()
-}
-
-secondary_family_interactions_compact <- secondary_family_interactions %>%
-  dplyr::transmute(
-    biomarker = biomarker_label,
-    n,
-    events,
-    `Ref HR (95% CI)` = hr_ref_ci,
-    `Ref Wald P` = p_ref_fmt,
-    `Interaction P` = p_int_fmt,
-    `Holm P` = p_holm_fmt,
-    `BH q` = q_bh_fmt
-  )
-
-readr::write_csv(
-  secondary_family_interactions,
-  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_family_interactions.csv")
-)
-readr::write_csv(
-  secondary_family_interactions_compact,
-  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_family_interactions_compact.csv")
-)
-
-# Required incremental sequence: assess IL-6 and D-dimer beyond cardiac markers
-required_incremental_vars <- unique(c(
-  "hf_time_days", "hf_event",
-  "age1c", "sex", "race_eth", "site_factor",
-  "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c",
-  "cig1c", "educ1", "income1",
-  "z_log_ntprobnp_e1", "z_log_troponin_e1",
-  "z_log_il61", "z_log_ddimer1"
-))
-
-required_incremental_vars <- required_incremental_vars[required_incremental_vars %in% names(mesa_main)]
-
-incremental_cardiac_data <- mesa_main %>%
-  dplyr::select(dplyr::any_of(required_incremental_vars)) %>%
-  dplyr::filter(
-    !is.na(hf_time_days),
-    !is.na(hf_event),
-    hf_time_days > 0,
-    hf_event %in% c(0, 1)
-  )
-
-clinical_terms <- c(
-  "age1c", "sex", "race_eth", "site_factor",
-  "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c",
-  "cig1c", "educ1", "income1"
-)
-clinical_terms <- clinical_terms[clinical_terms %in% names(incremental_cardiac_data)]
-
-cardiac_terms <- c("z_log_ntprobnp_e1", "z_log_troponin_e1")
-cardiac_terms <- cardiac_terms[cardiac_terms %in% names(incremental_cardiac_data)]
-
-inflamm_terms <- c("z_log_il61", "z_log_ddimer1")
-inflamm_terms <- inflamm_terms[inflamm_terms %in% names(incremental_cardiac_data)]
-
-rhs_c0 <- paste(clinical_terms, collapse = " + ")
-rhs_c1 <- paste(c(clinical_terms, cardiac_terms), collapse = " + ")
-rhs_c2 <- paste(c(clinical_terms, cardiac_terms, "z_log_il61"), collapse = " + ")
-rhs_c3 <- paste(c(clinical_terms, cardiac_terms, "z_log_ddimer1"), collapse = " + ")
-rhs_c4 <- paste(c(clinical_terms, cardiac_terms, inflamm_terms), collapse = " + ")
-
-sec_n_complete <- function(data, rhs) {
-  vars <- c("hf_time_days", "hf_event", all.vars(stats::as.formula(paste0("~", rhs))))
-  data %>%
-    dplyr::select(dplyr::any_of(vars)) %>%
-    dplyr::filter(
-      dplyr::if_all(dplyr::everything(), ~ !is.na(.x)),
-      hf_time_days > 0,
-      hf_event %in% c(0, 1)
-    ) %>%
-    nrow()
-}
-
-sec_fit_safe <- function(data, rhs) {
-  n_cc <- sec_n_complete(data, rhs)
-  if (n_cc == 0L) return(NULL)
-  if (exists("fit_incremental_cox")) {
-    fit_incremental_cox(data, rhs, time_var = "hf_time_days", event_var = "hf_event")
-  } else {
-    fml <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs))
-    dat <- data %>%
-      dplyr::select(dplyr::any_of(c("hf_time_days", "hf_event", all.vars(stats::as.formula(paste0("~", rhs)))))) %>%
-      dplyr::filter(dplyr::if_all(dplyr::everything(), ~ !is.na(.x)), hf_time_days > 0, hf_event %in% c(0, 1))
-    survival::coxph(fml, data = dat, ties = "efron", x = TRUE, y = TRUE)
-  }
-}
-
-secondary_incremental_models <- list(
-  C0_clinical = sec_fit_safe(incremental_cardiac_data, rhs_c0),
-  C1_clinical_plus_cardiac = sec_fit_safe(incremental_cardiac_data, rhs_c1),
-  C2_cardiac_plus_IL6 = sec_fit_safe(incremental_cardiac_data, rhs_c2),
-  C3_cardiac_plus_Ddimer = sec_fit_safe(incremental_cardiac_data, rhs_c3),
-  C4_cardiac_plus_IL6_Ddimer = sec_fit_safe(incremental_cardiac_data, rhs_c4)
-)
-secondary_incremental_models <- purrr::compact(secondary_incremental_models)
-
-secondary_incremental_performance <- purrr::imap_dfr(
-  secondary_incremental_models,
-  function(fit, nm) {
-    tibble::tibble(
-      model = nm,
-      n = stats::nobs(fit),
-      events = sum(fit$y[, 2], na.rm = TRUE),
-      c_index = unname(summary(fit)$concordance[1])
-    )
-  }
-)
-
-if (exists("make_step_surv_fun") && exists("predict_risk_at_time") &&
-    exists("calc_td_auc_ipcw") && exists("calc_brier_ipcw") && exists("calc_ibs")) {
-  g_fit_sec <- survival::survfit(survival::Surv(hf_time_days, 1 - hf_event) ~ 1, data = incremental_cardiac_data)
-  g_hat_sec <- make_step_surv_fun(g_fit_sec)
-
-  event_times_sec <- incremental_cardiac_data$hf_time_days[incremental_cardiac_data$hf_event == 1]
-  eval_times_sec <- stats::quantile(event_times_sec, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
-  eval_times_sec <- as.numeric(unique(eval_times_sec[is.finite(eval_times_sec) & eval_times_sec > 0]))
-
-  sec_time_metrics <- purrr::imap_dfr(
-    secondary_incremental_models,
-    function(fit, model_name) {
-      purrr::map_dfr(eval_times_sec, function(t_now) {
-        risk_t <- predict_risk_at_time(fit, incremental_cardiac_data, t_now)
-        tibble::tibble(
-          model = model_name,
-          time = t_now,
-          td_auc = calc_td_auc_ipcw(
-            score = risk_t,
-            time = incremental_cardiac_data$hf_time_days,
-            event = incremental_cardiac_data$hf_event,
-            t = t_now,
-            g_hat_fun = g_hat_sec
-          ),
-          brier = calc_brier_ipcw(
-            risk = risk_t,
-            time = incremental_cardiac_data$hf_time_days,
-            event = incremental_cardiac_data$hf_event,
-            t = t_now,
-            g_hat_fun = g_hat_sec
-          )
-        )
-      })
-    }
-  )
-
-  sec_auc_summary <- sec_time_metrics %>% dplyr::summarize(td_auc_mean = mean(td_auc, na.rm = TRUE), .by = model)
-  sec_ibs_summary <- sec_time_metrics %>% dplyr::summarize(integrated_brier = calc_ibs(time, brier), .by = model)
-
-  secondary_incremental_performance <- secondary_incremental_performance %>%
-    dplyr::left_join(sec_auc_summary, by = "model") %>%
-    dplyr::left_join(sec_ibs_summary, by = "model")
-
-  readr::write_csv(
-    sec_time_metrics,
-    fs::path(OUT_DIR, "mesa_hf_secondary_incremental_time_metrics.csv")
-  )
-}
-
-secondary_incremental_lrt <- dplyr::bind_rows(
-  compare_lrt(
-    secondary_incremental_models$C0_clinical,
-    secondary_incremental_models$C1_clinical_plus_cardiac,
-    "C0 clinical",
-    "C1 + NT-proBNP + troponin"
-  ),
-  compare_lrt(
-    secondary_incremental_models$C1_clinical_plus_cardiac,
-    secondary_incremental_models$C2_cardiac_plus_IL6,
-    "C1 + cardiac",
-    "C2 + IL-6"
-  ),
-  compare_lrt(
-    secondary_incremental_models$C1_clinical_plus_cardiac,
-    secondary_incremental_models$C3_cardiac_plus_Ddimer,
-    "C1 + cardiac",
-    "C3 + D-dimer"
-  ),
-  compare_lrt(
-    secondary_incremental_models$C1_clinical_plus_cardiac,
-    secondary_incremental_models$C4_cardiac_plus_IL6_Ddimer,
-    "C1 + cardiac",
-    "C4 + IL-6 + D-dimer"
-  )
-) %>%
-  dplyr::mutate(p_value_fmt = formatC(p_value, format = "g", digits = 3))
-
-secondary_incremental_performance_compact <- secondary_incremental_performance %>%
-  dplyr::mutate(
-    `C-index` = formatC(c_index, format = "f", digits = 3),
-    `Time-dependent AUC (mean)` = dplyr::if_else(is.na(td_auc_mean), NA_character_, formatC(td_auc_mean, format = "f", digits = 3)),
-    `Integrated Brier Score` = dplyr::if_else(is.na(integrated_brier), NA_character_, formatC(integrated_brier, format = "f", digits = 3))
-  ) %>%
-  dplyr::select(model, n, events, `C-index`, `Time-dependent AUC (mean)`, `Integrated Brier Score`)
-
-readr::write_csv(
-  secondary_incremental_performance,
-  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_performance.csv")
-)
-readr::write_csv(
-  secondary_incremental_performance_compact,
-  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_performance_compact.csv")
-)
-readr::write_csv(
-  secondary_incremental_lrt,
-  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_lrt.csv")
-)
-
-secondary_cardiac_family_interactions <- secondary_family_interactions
-secondary_cardiac_family_interactions_compact <- secondary_family_interactions_compact
-secondary_cardiac_incremental_models <- secondary_incremental_models
-secondary_cardiac_incremental_performance <- secondary_incremental_performance
-secondary_cardiac_incremental_performance_compact <- secondary_incremental_performance_compact
-secondary_cardiac_incremental_lrt <- secondary_incremental_lrt
 ensure_cols <- function(dat, cols, fill = NA) {
   for (nm in cols) {
     if (!nm %in% names(dat)) dat[[nm]] <- fill
@@ -403,8 +161,8 @@ load_cardiac <- function(file079, file244) {
       )
     ) %>%
     mutate(
-      ntprobnp_e1 = if_else(ntprobnp_qns1 == 1, NA_real_, ntprobnp_e1),
-      troponin_e1 = if_else(troponin_qns1 == 1, NA_real_, troponin_e1)
+      ntprobnp_e1 = if_else(ntprobnp_qns1 == 1, NA_real_, ntprobnp_e1, missing = ntprobnp_e1),
+      troponin_e1 = if_else(troponin_qns1 == 1, NA_real_, troponin_e1, missing = troponin_e1)
     )
 }
 
@@ -3449,7 +3207,7 @@ if (is.null(exam4_diag_data)) {
       loo_tbl <- tibble::tibble()
       if (!is.na(black_interaction_term) && nrow(influential_cases) > 0) {
         top_ids <- influential_cases %>%
-          dplyr::slice_head(n = min(25, dplyr::n())) %>%
+          dplyr::slice_head(n = min(25, nrow(influential_cases))) %>%
           dplyr::pull(.row_id)
 
         full_beta_black <- as.numeric(stats::coef(fit_exam4_ddimer)[black_interaction_term])
@@ -3512,4 +3270,268 @@ if (is.null(exam4_diag_data)) {
     }
   }
 }
+
+
+# 29) Secondary cardiac biomarker family + required incremental evidence -----
+# SOP secondary family: NT-proBNP and troponin (Holm-corrected).
+# Manuscript-critical test: do IL-6 and D-dimer add prognostic information
+# beyond established cardiac biomarkers?
+
+secondary_family_markers <- c("z_log_ntprobnp_e1", "z_log_troponin_e1")
+secondary_family_markers <- secondary_family_markers[
+  secondary_family_markers %in% names(mesa_main) &
+    vapply(mesa_main[secondary_family_markers], function(x) sum(!is.na(x)) > 0, logical(1))
+]
+
+# Guardrail diagnostics for cardiac linkage/availability
+secondary_cardiac_availability <- tibble::tibble(
+  n_main = nrow(mesa_main),
+  n_events = sum(mesa_main$hf_event, na.rm = TRUE),
+  n_ntprobnp_nonmissing = if ("ntprobnp_e1" %in% names(mesa_main)) sum(!is.na(mesa_main$ntprobnp_e1)) else NA_integer_,
+  n_troponin_nonmissing = if ("troponin_e1" %in% names(mesa_main)) sum(!is.na(mesa_main$troponin_e1)) else NA_integer_,
+  n_z_ntprobnp_nonmissing = if ("z_log_ntprobnp_e1" %in% names(mesa_main)) sum(!is.na(mesa_main$z_log_ntprobnp_e1)) else NA_integer_,
+  n_z_troponin_nonmissing = if ("z_log_troponin_e1" %in% names(mesa_main)) sum(!is.na(mesa_main$z_log_troponin_e1)) else NA_integer_
+)
+readr::write_csv(
+  secondary_cardiac_availability,
+  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_availability.csv")
+)
+
+secondary_family_interactions <- if (length(secondary_family_markers) > 0) {
+  run_scan(
+    biomarkers = secondary_family_markers,
+    family_label = "secondary_cardiac",
+    data = mesa_main,
+    base_covars = base_covars
+  ) %>%
+    dplyr::mutate(
+      biomarker_label = dplyr::recode(biomarker, !!!BIOMARKER_LABELS, .default = biomarker),
+      hr_ref_ci = glue::glue(
+        "{formatC(hr_ref, format = 'f', digits = 2)} ({formatC(lcl_ref, format = 'f', digits = 2)}, {formatC(ucl_ref, format = 'f', digits = 2)})"
+      ),
+      p_ref_fmt = formatC(p_ref, format = "g", digits = 3),
+      p_int_fmt = formatC(p_interaction, format = "g", digits = 3),
+      p_holm_fmt = formatC(p_adj_holm, format = "g", digits = 3),
+      q_bh_fmt = formatC(q_adj_bh, format = "g", digits = 3)
+    )
+} else {
+  tibble::tibble(
+    biomarker = NA_character_,
+    n = NA_integer_,
+    events = NA_integer_,
+    hr_ref = NA_real_,
+    lcl_ref = NA_real_,
+    ucl_ref = NA_real_,
+    p_ref = NA_real_,
+    p_interaction = NA_real_,
+    family = "secondary_cardiac",
+    p_adj_holm = NA_real_,
+    q_adj_bh = NA_real_,
+    biomarker_label = NA_character_,
+    hr_ref_ci = NA_character_,
+    p_ref_fmt = NA_character_,
+    p_int_fmt = NA_character_,
+    p_holm_fmt = NA_character_,
+    q_bh_fmt = NA_character_,
+    status = "no_nonmissing_secondary_markers"
+  )
+}
+
+secondary_family_interactions_compact <- secondary_family_interactions %>%
+  dplyr::transmute(
+    biomarker = biomarker_label,
+    n,
+    events,
+    `Ref HR (95% CI)` = hr_ref_ci,
+    `Ref Wald P` = p_ref_fmt,
+    `Interaction P` = p_int_fmt,
+    `Holm P` = p_holm_fmt,
+    `BH q` = q_bh_fmt
+  )
+
+readr::write_csv(
+  secondary_family_interactions,
+  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_family_interactions.csv")
+)
+readr::write_csv(
+  secondary_family_interactions_compact,
+  fs::path(OUT_DIR, "mesa_hf_secondary_cardiac_family_interactions_compact.csv")
+)
+
+required_incremental_vars <- unique(c(
+  "hf_time_days", "hf_event",
+  "age1c", "sex", "race_eth", "site_factor",
+  "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c",
+  "cig1c", "educ1", "income1",
+  "z_log_ntprobnp_e1", "z_log_troponin_e1",
+  "z_log_il61", "z_log_ddimer1"
+))
+required_incremental_vars <- required_incremental_vars[required_incremental_vars %in% names(mesa_main)]
+
+incremental_cardiac_data <- mesa_main %>%
+  dplyr::select(dplyr::any_of(required_incremental_vars)) %>%
+  dplyr::filter(!is.na(hf_time_days), !is.na(hf_event), hf_time_days > 0, hf_event %in% c(0, 1))
+
+clinical_terms <- c(
+  "age1c", "sex", "race_eth", "site_factor",
+  "bmi1c", "sbp1c", "htn1c", "dm031c", "chol1", "hdl1", "ldl1", "trig1", "cepgfr1c",
+  "cig1c", "educ1", "income1"
+)
+clinical_terms <- clinical_terms[clinical_terms %in% names(incremental_cardiac_data)]
+
+cardiac_terms <- c("z_log_ntprobnp_e1", "z_log_troponin_e1")
+cardiac_terms <- cardiac_terms[cardiac_terms %in% names(incremental_cardiac_data)]
+
+inflamm_terms <- c("z_log_il61", "z_log_ddimer1")
+inflamm_terms <- inflamm_terms[inflamm_terms %in% names(incremental_cardiac_data)]
+
+rhs_c0 <- paste(clinical_terms, collapse = " + ")
+rhs_c1 <- paste(c(clinical_terms, cardiac_terms), collapse = " + ")
+rhs_c2 <- paste(c(clinical_terms, cardiac_terms, "z_log_il61"), collapse = " + ")
+rhs_c3 <- paste(c(clinical_terms, cardiac_terms, "z_log_ddimer1"), collapse = " + ")
+rhs_c4 <- paste(c(clinical_terms, cardiac_terms, inflamm_terms), collapse = " + ")
+
+sec_n_complete <- function(data, rhs) {
+  vars <- c("hf_time_days", "hf_event", all.vars(stats::as.formula(paste0("~", rhs))))
+  data %>%
+    dplyr::select(dplyr::any_of(vars)) %>%
+    dplyr::filter(
+      dplyr::if_all(dplyr::everything(), ~ !is.na(.x)),
+      hf_time_days > 0,
+      hf_event %in% c(0, 1)
+    ) %>%
+    nrow()
+}
+
+sec_fit_safe <- function(data, rhs) {
+  n_cc <- sec_n_complete(data, rhs)
+  if (n_cc == 0L) return(NULL)
+  fit_incremental_cox(data, rhs, time_var = "hf_time_days", event_var = "hf_event")
+}
+
+sec_fit_pair_on_large_sample <- function(data, rhs_small, rhs_large) {
+  vars_large <- c("hf_time_days", "hf_event", all.vars(stats::as.formula(paste0("~", rhs_large))))
+  d_cc <- data %>%
+    dplyr::select(dplyr::any_of(vars_large)) %>%
+    dplyr::filter(
+      dplyr::if_all(dplyr::everything(), ~ !is.na(.x)),
+      hf_time_days > 0,
+      hf_event %in% c(0, 1)
+    )
+
+  if (nrow(d_cc) == 0L) {
+    return(list(fit_small = NULL, fit_large = NULL, n = 0L, events = 0L))
+  }
+
+  fml_small <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs_small))
+  fml_large <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs_large))
+
+  fit_small <- tryCatch(survival::coxph(fml_small, data = d_cc, ties = "efron", x = TRUE, y = TRUE), error = function(e) NULL)
+  fit_large <- tryCatch(survival::coxph(fml_large, data = d_cc, ties = "efron", x = TRUE, y = TRUE), error = function(e) NULL)
+
+  list(
+    fit_small = fit_small,
+    fit_large = fit_large,
+    n = nrow(d_cc),
+    events = sum(d_cc$hf_event, na.rm = TRUE)
+  )
+}
+
+secondary_incremental_models <- list(
+  C0_clinical = sec_fit_safe(incremental_cardiac_data, rhs_c0),
+  C1_clinical_plus_cardiac = sec_fit_safe(incremental_cardiac_data, rhs_c1),
+  C2_cardiac_plus_IL6 = sec_fit_safe(incremental_cardiac_data, rhs_c2),
+  C3_cardiac_plus_Ddimer = sec_fit_safe(incremental_cardiac_data, rhs_c3),
+  C4_cardiac_plus_IL6_Ddimer = sec_fit_safe(incremental_cardiac_data, rhs_c4)
+)
+secondary_incremental_models <- purrr::compact(secondary_incremental_models)
+
+secondary_incremental_performance <- purrr::imap_dfr(
+  secondary_incremental_models,
+  function(fit, nm) {
+    tibble::tibble(
+      model = nm,
+      n = stats::nobs(fit),
+      events = sum(fit$y[, 2], na.rm = TRUE),
+      c_index = unname(summary(fit)$concordance[1])
+    )
+  }
+)
+
+sec_compare_lrt <- function(fit_small, fit_large, model_small, model_large) {
+  if (is.null(fit_small) || is.null(fit_large)) {
+    return(tibble::tibble(
+      model_small = model_small,
+      model_large = model_large,
+      df_diff = NA_real_,
+      chisq = NA_real_,
+      p_value = NA_real_,
+      status = "not_estimable"
+    ))
+  }
+
+  compare_lrt(fit_small, fit_large, model_small, model_large) %>%
+    dplyr::mutate(status = dplyr::if_else(is.na(p_value), "not_estimable", "ok"))
+}
+
+pair_c0_c1 <- sec_fit_pair_on_large_sample(incremental_cardiac_data, rhs_c0, rhs_c1)
+pair_c1_c2 <- sec_fit_pair_on_large_sample(incremental_cardiac_data, rhs_c1, rhs_c2)
+pair_c1_c3 <- sec_fit_pair_on_large_sample(incremental_cardiac_data, rhs_c1, rhs_c3)
+pair_c1_c4 <- sec_fit_pair_on_large_sample(incremental_cardiac_data, rhs_c1, rhs_c4)
+
+secondary_incremental_lrt <- dplyr::bind_rows(
+  sec_compare_lrt(
+    pair_c0_c1$fit_small,
+    pair_c0_c1$fit_large,
+    "C0 clinical",
+    "C1 + NT-proBNP + troponin"
+  ),
+  sec_compare_lrt(
+    pair_c1_c2$fit_small,
+    pair_c1_c2$fit_large,
+    "C1 + cardiac",
+    "C2 + IL-6"
+  ),
+  sec_compare_lrt(
+    pair_c1_c3$fit_small,
+    pair_c1_c3$fit_large,
+    "C1 + cardiac",
+    "C3 + D-dimer"
+  ),
+  sec_compare_lrt(
+    pair_c1_c4$fit_small,
+    pair_c1_c4$fit_large,
+    "C1 + cardiac",
+    "C4 + IL-6 + D-dimer"
+  )
+) %>%
+  dplyr::mutate(
+    p_value_fmt = formatC(p_value, format = "g", digits = 3),
+    n_pairwise = c(pair_c0_c1$n, pair_c1_c2$n, pair_c1_c3$n, pair_c1_c4$n),
+    events_pairwise = c(pair_c0_c1$events, pair_c1_c2$events, pair_c1_c3$events, pair_c1_c4$events)
+  )
+
+secondary_incremental_performance_compact <- secondary_incremental_performance %>%
+  dplyr::mutate(`C-index` = formatC(c_index, format = "f", digits = 3)) %>%
+  dplyr::select(model, n, events, `C-index`)
+
+readr::write_csv(
+  secondary_incremental_performance,
+  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_performance.csv")
+)
+readr::write_csv(
+  secondary_incremental_performance_compact,
+  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_performance_compact.csv")
+)
+readr::write_csv(
+  secondary_incremental_lrt,
+  fs::path(OUT_DIR, "mesa_hf_secondary_incremental_lrt.csv")
+)
+
+secondary_cardiac_family_interactions <- secondary_family_interactions
+secondary_cardiac_family_interactions_compact <- secondary_family_interactions_compact
+secondary_cardiac_incremental_models <- secondary_incremental_models
+secondary_cardiac_incremental_performance <- secondary_incremental_performance
+secondary_cardiac_incremental_performance_compact <- secondary_incremental_performance_compact
+secondary_cardiac_incremental_lrt <- secondary_incremental_lrt
 
