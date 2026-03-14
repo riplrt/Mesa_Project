@@ -2973,3 +2973,93 @@ readr::write_csv(
 print(composite_burden_additive_compact)
 print(composite_burden_interaction_compact)
 
+# 27) Proportional Hazards Diagnostics — Schoenfeld residuals --------------
+# Run cox.zph on key fitted Cox models and save tidy output
+out_file <- fs::path(OUT_DIR, "mesa_hf_ph_diagnostics_schoenfeld.csv")
+out_summary <- fs::path(OUT_DIR, "mesa_hf_ph_diagnostics_schoenfeld_summary.csv")
+
+models_list <- list()
+
+# include any incremental models that are already fitted
+if (exists("incremental_models") && is.list(incremental_models)) {
+  for (nm in names(incremental_models)) models_list[[paste0("incremental__", nm)]] <- incremental_models[[nm]]
+}
+
+# re-fit additive biomarker models (Exam 1) and store fits
+if (exists("biomarkers_additive") && length(biomarkers_additive) > 0 && exists("mesa_main")) {
+  for (bm in biomarkers_additive) {
+    rhs <- paste(c(bm, "race_eth", base_covars), collapse = " + ")
+    fml <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs))
+    d <- mesa_main %>% dplyr::select(dplyr::any_of(c("hf_time_days", "hf_event", bm, "race_eth", base_covars)))
+    d_cc <- tryCatch(d %>% dplyr::filter(dplyr::if_all(dplyr::everything(), ~ !is.na(.x)) & hf_time_days > 0), error = function(e) d[0,])
+    if (nrow(d_cc) > 10) {
+      fit <- tryCatch(survival::coxph(fml, data = d_cc, ties = "efron", x = TRUE, y = TRUE), error = function(e) NULL)
+      if (!is.null(fit)) models_list[[paste0("additive__", bm)]] <- fit
+    }
+  }
+}
+
+# re-fit interaction (full) models for biomarkers used in slope extraction
+if (exists("biomarkers_for_slopes") && length(biomarkers_for_slopes) > 0 && exists("mesa_main")) {
+  for (bm in biomarkers_for_slopes) {
+    rhs_full <- paste(c(paste0(bm, " * race_eth"), base_covars), collapse = " + ")
+    fml <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs_full))
+    d <- mesa_main %>% dplyr::select(dplyr::any_of(c("hf_time_days", "hf_event", bm, "race_eth", base_covars)))
+    d_cc <- tryCatch(d %>% dplyr::filter(dplyr::if_all(dplyr::everything(), ~ !is.na(.x)) & hf_time_days > 0), error = function(e) d[0,])
+    if (nrow(d_cc) > 20) {
+      fit <- tryCatch(survival::coxph(fml, data = d_cc, ties = "efron", x = TRUE, y = TRUE), error = function(e) NULL)
+      if (!is.null(fit)) models_list[[paste0("interaction__", bm)]] <- fit
+    }
+  }
+}
+
+# Exam4 additive models if exam4 landmark data present
+exam4_markers <- c("z_log_crp4", "z_fib4", "z_log_ddimer4", "z_log_icam4")
+if (exists("mesa_exam4_landmark") && exists("exam4_base_covars")) {
+  present <- exam4_markers[exam4_markers %in% names(mesa_exam4_landmark)]
+  for (bm in present) {
+    rhs <- paste(c(bm, "race_eth", exam4_base_covars), collapse = " + ")
+    fml <- stats::as.formula(paste0("survival::Surv(hf_time_days, hf_event) ~ ", rhs))
+    d <- mesa_exam4_landmark %>% dplyr::select(dplyr::any_of(c("hf_time_days", "hf_event", bm, "race_eth", exam4_base_covars)))
+    d_cc <- tryCatch(d %>% dplyr::filter(dplyr::if_all(dplyr::everything(), ~ !is.na(.x)) & hf_time_days > 0), error = function(e) d[0,])
+    if (nrow(d_cc) > 10) {
+      fit <- tryCatch(survival::coxph(fml, data = d_cc, ties = "efron", x = TRUE, y = TRUE), error = function(e) NULL)
+      if (!is.null(fit)) models_list[[paste0("exam4_additive__", bm)]] <- fit
+    }
+  }
+}
+
+# Helper to run cox.zph and tidy results
+run_zph_tidy <- function(fit, model_name) {
+  if (is.null(fit)) return(tibble::tibble(model = model_name, term = NA_character_, chisq = NA_real_, df = NA_real_, p = NA_real_, global_p = NA_real_))
+  z <- tryCatch(survival::cox.zph(fit), error = function(e) NULL)
+  if (is.null(z)) return(tibble::tibble(model = model_name, term = NA_character_, chisq = NA_real_, df = NA_real_, p = NA_real_, global_p = NA_real_))
+  tab <- as.data.frame(z$table)
+  terms <- rownames(tab)
+  df_tab <- tibble::tibble(term = terms, chisq = as.numeric(tab[[1]]))
+  if (ncol(tab) >= 2) df_tab$df <- as.numeric(tab[[2]]) else df_tab$df <- NA_real_
+  df_tab$p <- as.numeric(tab[[ncol(tab)]])
+  global_p <- NA_real_
+  if ("GLOBAL" %in% df_tab$term) global_p <- df_tab$p[df_tab$term == "GLOBAL"][1]
+  df_tab <- df_tab %>% dplyr::filter(term != "GLOBAL") %>% dplyr::mutate(model = model_name, global_p = global_p) %>% dplyr::select(model, term, chisq, df, p, global_p)
+  df_tab
+}
+
+ph_results <- purrr::imap_dfr(models_list, run_zph_tidy)
+
+if (nrow(ph_results) == 0) {
+  message("No fitted models found/suitable for PH diagnostics; no output written.")
+} else {
+  ph_results <- ph_results %>% dplyr::arrange(model, term)
+  readr::write_csv(ph_results, out_file)
+
+  # summary of violations
+  violations <- ph_results %>% dplyr::filter(is.finite(p) & p < 0.05)
+  summary_tbl <- if (nrow(violations) == 0) tibble::tibble(n_violations = 0) else violations %>% dplyr::group_by(model) %>% dplyr::summarize(n_terms = dplyr::n(), terms = paste0(unique(term), collapse = "; "), min_p = min(p, na.rm = TRUE))
+  readr::write_csv(summary_tbl, out_summary)
+  message("Wrote PH diagnostics: ", out_file)
+  message("Wrote PH summary: ", out_summary)
+}
+
+# End PH diagnostics
+
