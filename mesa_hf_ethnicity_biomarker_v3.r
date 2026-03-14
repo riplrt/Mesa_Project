@@ -3535,3 +3535,138 @@ secondary_cardiac_incremental_performance <- secondary_incremental_performance
 secondary_cardiac_incremental_performance_compact <- secondary_incremental_performance_compact
 secondary_cardiac_incremental_lrt <- secondary_incremental_lrt
 
+
+# 30) Composite score mediation with Immune Tone index ----------------------
+# Single-mediator headline estimate: proportion of Black-White HF gap
+# mediated through unified inflammatory burden.
+
+immune_tone_mediation_rows <- list()
+
+# Exam 1 Immune Tone index (composite)
+if ("z_exam1_inflammatory_burden" %in% names(mesa_main)) {
+  exam1_tone_data <- mesa_main %>%
+    dplyr::mutate(
+      race_label = dplyr::recode(as.character(race_eth), !!!RACE_LABELS, .default = as.character(race_eth))
+    ) %>%
+    dplyr::filter(race_label %in% c("White", "Black")) %>%
+    dplyr::mutate(race_bw = factor(race_label, levels = c("White", "Black")))
+
+  exam1_covars_tone <- base_covars[base_covars %in% names(exam1_tone_data)]
+
+  exam1_tone_models <- dplyr::bind_rows(
+    estimate_black_white_gap(
+      data = exam1_tone_data,
+      time_var = "hf_time_days",
+      event_var = "hf_event",
+      covars = exam1_covars_tone,
+      biomarkers = character(0),
+      model_label = "Clinical only"
+    ),
+    estimate_black_white_gap(
+      data = exam1_tone_data,
+      time_var = "hf_time_days",
+      event_var = "hf_event",
+      covars = exam1_covars_tone,
+      biomarkers = "z_exam1_inflammatory_burden",
+      model_label = "Clinical + Immune Tone index"
+    )
+  ) %>%
+    summarize_gap_attenuation() %>%
+    dplyr::mutate(
+      analysis = "Exam 1",
+      mediator = "Immune Tone index",
+      mediator_var = "z_exam1_inflammatory_burden"
+    )
+
+  immune_tone_mediation_rows[[length(immune_tone_mediation_rows) + 1]] <- exam1_tone_models
+}
+
+# Exam 4-forward Immune Tone index (composite)
+if (exists("exam4_immune_data") && "z_exam4_multidomain_inflammatory_burden" %in% names(exam4_immune_data)) {
+  exam4_tone_data <- exam4_immune_data %>%
+    dplyr::mutate(
+      race_label = dplyr::recode(as.character(race_eth), !!!RACE_LABELS, .default = as.character(race_eth))
+    ) %>%
+    dplyr::filter(race_label %in% c("White", "Black")) %>%
+    dplyr::mutate(race_bw = factor(race_label, levels = c("White", "Black")))
+
+  exam4_covars_tone <- exam4_base_covars[
+    exam4_base_covars %in% names(exam4_tone_data) & exam4_base_covars != "race_eth"
+  ]
+
+  exam4_tone_models <- dplyr::bind_rows(
+    estimate_black_white_gap(
+      data = exam4_tone_data,
+      time_var = "hf_time_days_e4",
+      event_var = "hf_event_e4",
+      covars = exam4_covars_tone,
+      biomarkers = character(0),
+      model_label = "Clinical only"
+    ),
+    estimate_black_white_gap(
+      data = exam4_tone_data,
+      time_var = "hf_time_days_e4",
+      event_var = "hf_event_e4",
+      covars = exam4_covars_tone,
+      biomarkers = "z_exam4_multidomain_inflammatory_burden",
+      model_label = "Clinical + Immune Tone index"
+    )
+  ) %>%
+    summarize_gap_attenuation() %>%
+    dplyr::mutate(
+      analysis = "Exam 4 forward",
+      mediator = "Immune Tone index",
+      mediator_var = "z_exam4_multidomain_inflammatory_burden"
+    )
+
+  immune_tone_mediation_rows[[length(immune_tone_mediation_rows) + 1]] <- exam4_tone_models
+}
+
+immune_tone_gap_mediation <- if (length(immune_tone_mediation_rows) > 0) {
+  dplyr::bind_rows(immune_tone_mediation_rows)
+} else {
+  tibble::tibble(
+    analysis = NA_character_,
+    mediator = "Immune Tone index",
+    mediator_var = NA_character_,
+    model = NA_character_,
+    n = NA_integer_,
+    events = NA_integer_,
+    log_hr_black_vs_white = NA_real_,
+    hr_black_vs_white = NA_real_,
+    lcl = NA_real_,
+    ucl = NA_real_,
+    p_value = NA_real_,
+    pct_excess_risk_explained = NA_real_,
+    hr_ci = NA_character_,
+    p_value_fmt = NA_character_,
+    status = "immune_tone_index_not_available"
+  )
+}
+
+immune_tone_gap_mediation_compact <- immune_tone_gap_mediation %>%
+  dplyr::transmute(
+    analysis,
+    mediator,
+    model,
+    n,
+    events,
+    `Black vs White HR (95% CI)` = hr_ci,
+    `Wald P` = p_value_fmt,
+    `% excess risk explained vs clinical-only` = formatC(pct_excess_risk_explained, format = "f", digits = 1)
+  )
+
+readr::write_csv(
+  immune_tone_gap_mediation,
+  fs::path(OUT_DIR, "mesa_hf_black_white_gap_mediation_immune_tone_index.csv")
+)
+readr::write_csv(
+  immune_tone_gap_mediation_compact,
+  fs::path(OUT_DIR, "mesa_hf_black_white_gap_mediation_immune_tone_index_compact.csv")
+)
+
+black_white_gap_mediation_immune_tone_index <- immune_tone_gap_mediation
+black_white_gap_mediation_immune_tone_index_compact <- immune_tone_gap_mediation_compact
+
+print(immune_tone_gap_mediation_compact)
+
