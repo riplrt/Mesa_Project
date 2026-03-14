@@ -3063,3 +3063,214 @@ if (nrow(ph_results) == 0) {
 
 # End PH diagnostics
 
+# 28) Influence and residual diagnostics (targeted: Exam 4 D-dimer) ---------
+# Rationale: focused leverage/influence check for the Exam 4 D-dimer model
+# where event counts are limited and inversion risk is highest.
+
+exam4_infl_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influence_diagnostics.csv")
+exam4_infl_flagged_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influential_observations.csv")
+exam4_infl_loo_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influence_loo_black_effect.csv")
+exam4_infl_summary_file <- fs::path(OUT_DIR, "mesa_hf_exam4_ddimer_influence_summary.csv")
+
+if (exists("exam4_immune_data") &&
+    all(c("hf_time_days_e4", "hf_event_e4", "z_log_ddimer4", "race_eth") %in% names(exam4_immune_data))) {
+  exam4_diag_data <- exam4_immune_data
+  exam4_time_var <- "hf_time_days_e4"
+  exam4_event_var <- "hf_event_e4"
+} else if (exists("mesa_exam4_landmark") &&
+           all(c("hf_time_days", "hf_event", "z_log_ddimer4", "race_eth") %in% names(mesa_exam4_landmark))) {
+  exam4_diag_data <- mesa_exam4_landmark
+  exam4_time_var <- "hf_time_days"
+  exam4_event_var <- "hf_event"
+} else {
+  exam4_diag_data <- NULL
+}
+
+if (is.null(exam4_diag_data)) {
+  message("Exam 4 D-dimer influence diagnostics skipped: required data/columns not found.")
+} else {
+  exam4_covars <- if (exists("exam4_base_covars")) exam4_base_covars else character(0)
+  exam4_covars <- setdiff(unique(exam4_covars), c("race_eth", "z_log_ddimer4", exam4_time_var, exam4_event_var))
+  exam4_covars <- exam4_covars[exam4_covars %in% names(exam4_diag_data)]
+
+  exam4_vars_needed <- unique(c(
+    "mesaid",
+    exam4_time_var,
+    exam4_event_var,
+    "z_log_ddimer4",
+    "race_eth",
+    exam4_covars
+  ))
+
+  d_exam4 <- exam4_diag_data %>%
+    dplyr::select(dplyr::any_of(exam4_vars_needed)) %>%
+    dplyr::mutate(
+      race_eth = as.factor(race_eth)
+    ) %>%
+    dplyr::filter(
+      dplyr::if_all(dplyr::everything(), ~ !is.na(.x)),
+      .data[[exam4_time_var]] > 0,
+      .data[[exam4_event_var]] %in% c(0, 1)
+    )
+
+  if (nrow(d_exam4) < 30 || sum(d_exam4[[exam4_event_var]], na.rm = TRUE) < 10) {
+    message("Exam 4 D-dimer influence diagnostics skipped: insufficient complete-case sample/events.")
+  } else {
+    rhs_exam4 <- paste(c("z_log_ddimer4 * race_eth", exam4_covars), collapse = " + ")
+    fml_exam4 <- stats::as.formula(
+      paste0("survival::Surv(", exam4_time_var, ", ", exam4_event_var, ") ~ ", rhs_exam4)
+    )
+
+    fit_exam4_ddimer <- tryCatch(
+      survival::coxph(fml_exam4, data = d_exam4, ties = "efron", x = TRUE, y = TRUE),
+      error = function(e) NULL
+    )
+
+    if (is.null(fit_exam4_ddimer)) {
+      message("Exam 4 D-dimer influence diagnostics skipped: model fit failed.")
+    } else {
+      dfb <- residuals(fit_exam4_ddimer, type = "dfbeta")
+      if (is.null(dim(dfb))) {
+        dfb <- matrix(dfb, ncol = 1)
+        colnames(dfb) <- names(stats::coef(fit_exam4_ddimer))[1]
+      }
+      dfb <- as.data.frame(dfb)
+      if (is.null(colnames(dfb))) colnames(dfb) <- names(stats::coef(fit_exam4_ddimer))[seq_len(ncol(dfb))]
+
+      score_res <- residuals(fit_exam4_ddimer, type = "score")
+      if (is.null(dim(score_res))) {
+        score_res <- matrix(score_res, ncol = 1)
+      }
+
+      martingale_res <- as.numeric(residuals(fit_exam4_ddimer, type = "martingale"))
+      deviance_res <- as.numeric(residuals(fit_exam4_ddimer, type = "deviance"))
+      lp <- as.numeric(stats::predict(fit_exam4_ddimer, type = "lp"))
+
+      ddimer_terms <- grep("z_log_ddimer4", colnames(dfb), value = TRUE)
+      ddimer_interaction_terms <- grep("z_log_ddimer4:race_eth|race_eth.*:z_log_ddimer4", colnames(dfb), value = TRUE)
+
+      n_obs <- nrow(d_exam4)
+      p_par <- length(stats::coef(fit_exam4_ddimer))
+      dfbeta_threshold <- 2 / sqrt(n_obs)
+      mesaid_vec <- if ("mesaid" %in% names(d_exam4)) d_exam4$mesaid else rep(NA_integer_, n_obs)
+
+      infl_tbl <- d_exam4 %>%
+        dplyr::mutate(.row_id = dplyr::row_number()) %>%
+        dplyr::transmute(
+          .row_id,
+          mesaid = mesaid_vec,
+          race_eth,
+          time = .data[[exam4_time_var]],
+          event = .data[[exam4_event_var]],
+          z_log_ddimer4,
+          lp = lp,
+          martingale = martingale_res,
+          deviance = deviance_res,
+          max_abs_dfbeta = apply(abs(as.matrix(dfb)), 1, max),
+          max_abs_dfbeta_ddimer = if (length(ddimer_terms) > 0) {
+            apply(abs(as.matrix(dfb[, ddimer_terms, drop = FALSE])), 1, max)
+          } else {
+            NA_real_
+          },
+          max_abs_dfbeta_ddimer_interaction = if (length(ddimer_interaction_terms) > 0) {
+            apply(abs(as.matrix(dfb[, ddimer_interaction_terms, drop = FALSE])), 1, max)
+          } else {
+            NA_real_
+          },
+          score_l2 = sqrt(rowSums(score_res^2))
+        )
+
+      score_threshold <- stats::quantile(infl_tbl$score_l2, probs = 0.99, na.rm = TRUE, names = FALSE)
+
+      infl_tbl <- infl_tbl %>%
+        dplyr::mutate(
+          dfbeta_threshold = dfbeta_threshold,
+          score_threshold = score_threshold,
+          flag_dfbeta_any = max_abs_dfbeta > dfbeta_threshold,
+          flag_dfbeta_ddimer = max_abs_dfbeta_ddimer > dfbeta_threshold,
+          flag_dfbeta_ddimer_interaction = max_abs_dfbeta_ddimer_interaction > dfbeta_threshold,
+          flag_score = score_l2 > score_threshold,
+          flag_influential = flag_dfbeta_ddimer_interaction | flag_dfbeta_ddimer | flag_score
+        )
+
+      influential_cases <- infl_tbl %>%
+        dplyr::filter(flag_influential) %>%
+        dplyr::arrange(dplyr::desc(max_abs_dfbeta_ddimer_interaction), dplyr::desc(score_l2))
+
+      # Leave-one-out sensitivity for Black interaction slope (targeted)
+      coef_names <- names(stats::coef(fit_exam4_ddimer))
+      black_term_candidates <- c(
+        "z_log_ddimer4:race_eth3",
+        "race_eth3:z_log_ddimer4",
+        "z_log_ddimer4:race_ethBlack",
+        "race_ethBlack:z_log_ddimer4"
+      )
+      black_interaction_term <- black_term_candidates[black_term_candidates %in% coef_names][1]
+
+      loo_tbl <- tibble::tibble()
+      if (!is.na(black_interaction_term) && nrow(influential_cases) > 0) {
+        top_ids <- influential_cases %>%
+          dplyr::slice_head(n = min(25, dplyr::n())) %>%
+          dplyr::pull(.row_id)
+
+        full_beta_black <- as.numeric(stats::coef(fit_exam4_ddimer)[black_interaction_term])
+
+        loo_tbl <- purrr::map_dfr(top_ids, function(ii) {
+          fit_loo <- tryCatch(
+            survival::coxph(fml_exam4, data = d_exam4[-ii, , drop = FALSE], ties = "efron", x = FALSE, y = FALSE),
+            error = function(e) NULL
+          )
+
+          beta_loo <- if (!is.null(fit_loo) && black_interaction_term %in% names(stats::coef(fit_loo))) {
+            as.numeric(stats::coef(fit_loo)[black_interaction_term])
+          } else {
+            NA_real_
+          }
+
+          tibble::tibble(
+            .row_id = ii,
+            mesaid = mesaid_vec[ii],
+            beta_black_interaction_full = full_beta_black,
+            beta_black_interaction_loo = beta_loo,
+            delta_beta = beta_loo - full_beta_black
+          )
+        }) %>%
+          dplyr::left_join(
+            influential_cases %>% dplyr::select(.row_id, race_eth, event, max_abs_dfbeta_ddimer_interaction, score_l2),
+            by = ".row_id"
+          )
+      }
+
+      summary_tbl <- tibble::tibble(
+        model = "Exam4 D-dimer interaction",
+        n = nrow(d_exam4),
+        events = sum(d_exam4[[exam4_event_var]], na.rm = TRUE),
+        n_parameters = p_par,
+        dfbeta_threshold = dfbeta_threshold,
+        score_threshold_p99 = score_threshold,
+        n_flag_influential = nrow(influential_cases),
+        n_flag_dfbeta_ddimer_interaction = sum(infl_tbl$flag_dfbeta_ddimer_interaction, na.rm = TRUE),
+        n_flag_dfbeta_ddimer = sum(infl_tbl$flag_dfbeta_ddimer, na.rm = TRUE),
+        n_flag_score = sum(infl_tbl$flag_score, na.rm = TRUE),
+        black_interaction_term = ifelse(is.na(black_interaction_term), NA_character_, black_interaction_term),
+        max_abs_delta_beta_black_loo = if (nrow(loo_tbl) > 0) max(abs(loo_tbl$delta_beta), na.rm = TRUE) else NA_real_
+      )
+
+      readr::write_csv(infl_tbl, exam4_infl_file)
+      readr::write_csv(influential_cases, exam4_infl_flagged_file)
+      readr::write_csv(loo_tbl, exam4_infl_loo_file)
+      readr::write_csv(summary_tbl, exam4_infl_summary_file)
+
+      exam4_ddimer_influence_diagnostics <- infl_tbl
+      exam4_ddimer_influential_observations <- influential_cases
+      exam4_ddimer_influence_loo_black_effect <- loo_tbl
+      exam4_ddimer_influence_summary <- summary_tbl
+
+      message("Wrote Exam 4 D-dimer influence diagnostics: ", exam4_infl_file)
+      message("Wrote Exam 4 influential observations: ", exam4_infl_flagged_file)
+      message("Wrote Exam 4 D-dimer LOO sensitivity: ", exam4_infl_loo_file)
+      message("Wrote Exam 4 influence summary: ", exam4_infl_summary_file)
+    }
+  }
+}
+
