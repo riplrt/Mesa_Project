@@ -159,15 +159,6 @@ This project uses data and/or biospecimen-derived measures obtained through the 
 
 ---
 
-## Suggested next steps (optional)
-
-- Add `renv` for reproducible R package management.
-- Add a `data/README.md` documenting the exact expected input filenames and provenance.
-- Add a Python/PySpark ingestion layer for scalable joins/feature engineering (keeping `MESAID` as the primary key).
-- For mixed-effects modeling, default to `lme4`/`nlme` with random intercepts for **MESAID** and **SITE** when appropriate.
-
----
-
 ## License / citation
 
 - All analysis code in this repository is released under the MIT License unless otherwise specified.
