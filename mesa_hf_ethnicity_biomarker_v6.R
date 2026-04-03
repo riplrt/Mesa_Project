@@ -1793,7 +1793,7 @@ evalue_results <- mediation_all %>%
   dplyr::filter(status == "success", !is.na(nie_est)) %>%
   dplyr::rowwise() %>%
   dplyr::mutate(
-    # NIE on log-HR scale from survCox; convert to HR
+    # NIE on log-HR scale from coxph; convert to HR
     nie_hr     = exp(nie_est),
     nie_hr_lcl = exp(nie_lcl),
     nie_hr_ucl = exp(nie_ucl),
