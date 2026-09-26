@@ -1,0 +1,15 @@
+analysis,model,n,events,Black vs White HR (95% CI),Wald P,% excess risk explained vs clinical-only
+Exam 1,Clinical only,4151,319,"0.91 (0.68, 1.21)",0.516,-0.0
+Exam 1,Clinical + CRP (log-z),4127,317,"0.89 (0.67, 1.19)",0.443,-19.0
+Exam 1,Clinical + IL-6 (log-z),4043,312,"0.90 (0.67, 1.20)",0.467,-13.7
+Exam 1,Clinical + Fibrinogen (z),4130,318,"0.89 (0.67, 1.18)",0.418,-25.4
+Exam 1,Clinical + D-dimer (log-z),4130,318,"0.87 (0.65, 1.16)",0.332,-50.3
+Exam 1,Clinical + all Exam 1 markers,4030,310,"0.86 (0.64, 1.15)",0.317,-57.5
+Exam 4 forward,Clinical only,3055,222,"0.87 (0.63, 1.20)",0.389,-0.0
+Exam 4 forward,Clinical + CRP4 (log-z),239,19,"0.67 (0.21, 2.12)",0.494,-180.5
+Exam 4 forward,Clinical + FIB4 (z),247,19,"0.60 (0.19, 1.93)",0.394,-252.1
+Exam 4 forward,Clinical + DDIMER4 (log-z),247,19,"0.64 (0.20, 2.05)",0.452,-211.1
+Exam 4 forward,Clinical + ICAM4 (log-z),246,19,"0.91 (0.27, 2.99)",0.87,30.6
+Exam 4 forward,Clinical + all Exam 4 core markers,238,19,"0.72 (0.21, 2.52)",0.609,-127.9
+Exam 4 forward,Clinical + all immune phenotypes,130,6,"0.00 (0.00, 862845647815484340948697088.00)",0.497,-22812.6
+Exam 4 forward,Clinical + core + immune phenotypes,44,2,"1779591269202.93 (0.00, Inf)",   1,19771.1

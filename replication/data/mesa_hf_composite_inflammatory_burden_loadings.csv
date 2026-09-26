@@ -1,0 +1,11 @@
+analysis,score_name,marker,loading_pc1,abs_loading,variance_explained_pc1,n_complete,marker_label
+Exam 1,z_exam1_inflammatory_burden,z_log_crp1,0.5433996728495546,0.5433996728495546,0.53723,6567,CRP (log-z)
+Exam 1,z_exam1_inflammatory_burden,z_log_il61,0.5408177900459014,0.5408177900459014,0.53723,6567,IL-6 (log-z)
+Exam 1,z_exam1_inflammatory_burden,z_fib1,0.523815263771736,0.523815263771736,0.53723,6567,Fibrinogen (z)
+Exam 1,z_exam1_inflammatory_burden,z_log_ddimer1,0.3712822147054882,0.3712822147054882,0.53723,6567,D-dimer (log-z)
+Exam 4 forward,z_exam4_multidomain_inflammatory_burden,z_fib4,0.6463119859968885,0.6463119859968885,0.32053,104,FIB4 (z)
+Exam 4 forward,z_exam4_multidomain_inflammatory_burden,z_log_crp4,0.5607407324995746,0.5607407324995746,0.32053,104,CRP4 (log-z)
+Exam 4 forward,z_exam4_multidomain_inflammatory_burden,z_log_ddimer4,0.46270246171059104,0.46270246171059104,0.32053,104,DDIMER4 (log-z)
+Exam 4 forward,z_exam4_multidomain_inflammatory_burden,z_log_icam4,0.197485931814651,0.197485931814651,0.32053,104,ICAM4 (log-z)
+Exam 4 forward,z_exam4_multidomain_inflammatory_burden,z_epccd8la4,-0.11564931073546107,0.11564931073546107,0.32053,104,EPCCD8LA4 (z)
+Exam 4 forward,z_exam4_multidomain_inflammatory_burden,z_epcwba4,0.03717019318311076,0.03717019318311076,0.32053,104,EPCWBA4 (z)

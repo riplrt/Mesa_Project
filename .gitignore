@@ -1,2 +1,30 @@
-# Controlled-access MESA / BioLINCC raw data
+# macOS / editor artifacts
+.DS_Store
+**/.DS_Store
+.Rproj.user/
+.vscode/
+
+# R session/state
+.RData
+.Rhistory
+.Rapp.history
+.Ruserdata
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Controlled-access raw data (never track)
 data/rawdata/
+**/rawdata/
+
+# Local large intermediate analysis-ready participant-level files
+# Keep only aggregate, non-identifiable replication outputs in replication/
+data/derived/mesa_hf_biomarker_main.csv
+data/derived/mesa_hf_air_inflammation_subset.csv
+data/derived/mesa_hf_exam4_landmark_ready.csv
+
+# Notebook and temp files
+*.ipynb
+*.log
+*.tmp

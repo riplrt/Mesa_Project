@@ -1,0 +1,16 @@
+#!/usr/bin/env Rscript
+a <- read.csv('../data/derived/mesa_hf_biomarker_main.csv', check.names = FALSE)
+d <- subset(a, complete.cases(a[, c('hf_event', 'race_eth', 'z_log_il61')]))
+N_events <- sum(d$hf_event)
+props <- prop.table(table(d$race_eth))
+p_white <- as.numeric(props['1'])
+p_black <- as.numeric(props['3'])
+var_xg <- p_black * (1 - p_black)
+beta <- log(1.3)
+ncp <- sqrt(N_events * var_xg) * beta
+crit <- qnorm(0.975)
+power_1df <- pnorm(-crit - ncp) + (1 - pnorm(crit - ncp))
+power_global_approx <- pchisq(qchisq(0.95, df = 3), df = 3, ncp = ncp^2, lower.tail = FALSE)
+out <- data.frame(sample = 'Observed complete-case IL-6 interaction sample', n = nrow(d), events = N_events, p_white = p_white, p_black = p_black, interaction_hr = 1.3, beta = beta, power_black_vs_white_1df = power_1df, power_global_3df_approx = power_global_approx)
+write.csv(out, '../replication_reproduced_2026-08-14/data/mesa_hf_posthoc_interaction_power.csv', row.names = FALSE)
+write.csv(out, '../replication_reproduced_2026-08-14/tables/SuppTable_posthoc_interaction_power.csv', row.names = FALSE)
